@@ -168,8 +168,8 @@ export { handler };`} />
 SUPABASE_URL=your-project-url
 SUPABASE_ANON_KEY=your-public-anon-key
 
-# Google Gemini API
-API_KEY=your-google-api-key
+  # Google APIs (Gemini, Cloud Vision)
+  API_KEY=your-google-api-key
 
 # Stripe
 STRIPE_PUBLISHABLE_KEY=pk_test_...
