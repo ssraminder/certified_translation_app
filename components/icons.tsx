@@ -74,3 +74,20 @@ export const NetlifyIcon: React.FC<IconProps> = ({ className }) => (
         <path d="M49.86 16.4517L30.006 49.2437C29.166 50.5997 27.678 51.3197 26.19 51.3197C24.534 51.3197 23.046 50.4397 22.206 48.9157L4.14 15.9637C6.624 7.64768 14.868 1.48768 24.366 0.31168L27 0.0356797L29.634 0.31168C39.132 1.48768 47.376 7.64768 49.86 16.4517Z" fill="#2D3E50"></path>
     </svg>
 );
+
+export const ServerIcon: React.FC<IconProps> = ({ className }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    fill="none"
+    viewBox="0 0 24 24"
+    strokeWidth={1.5}
+    stroke="currentColor"
+    className={className}
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3V7.5a3 3 0 013-3h13.5a3 3 0 013 3v3.75a3 3 0 01-3 3m-13.5 0v4.5a3 3 0 003 3h7.5a3 3 0 003-3v-4.5m-4.5-.75h.008v.008h-.008v-.008z"
+    />
+  </svg>
+);

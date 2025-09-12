@@ -1,10 +1,56 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import { Card } from './components/Card';
 import { CodeBlock } from './components/CodeBlock';
-import { GithubIcon, NetlifyIcon, ReactIcon, ViteIcon } from './components/icons';
+import { GithubIcon, NetlifyIcon, ReactIcon, ViteIcon, ServerIcon } from './components/icons';
+
+const statusConfig = {
+  idle: {
+    color: 'bg-gray-500',
+    text: 'text-gray-400',
+    label: 'Idle',
+  },
+  loading: {
+    color: 'bg-yellow-500 animate-pulse',
+    text: 'text-yellow-400',
+    label: 'Loading',
+  },
+  success: {
+    color: 'bg-green-500',
+    text: 'text-green-400',
+    label: 'Success',
+  },
+  error: {
+    color: 'bg-red-500',
+    text: 'text-red-400',
+    label: 'Error',
+  },
+};
+
 
 const App: React.FC = () => {
   const GITHUB_REPO_URL = 'https://github.com/new';
+  const [apiStatus, setApiStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [apiResponse, setApiResponse] = useState<string>('');
+
+  const handlePing = useCallback(async () => {
+    setApiStatus('loading');
+    setApiResponse('');
+    try {
+      // Netlify functions are available at /.netlify/functions/
+      const response = await fetch('/.netlify/functions/ping');
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      setApiResponse(data.message || 'No message received');
+      setApiStatus('success');
+    } catch (error) {
+      console.error("Failed to ping API:", error);
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
+      setApiResponse(`Failed to connect. ${errorMessage}`);
+      setApiStatus('error');
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans p-4 sm:p-6 lg:p-8">
@@ -74,15 +120,91 @@ const App: React.FC = () => {
             </ol>
           </Card>
 
-           <div className="text-center py-8 px-6 bg-gray-800/50 rounded-lg border border-dashed border-gray-600">
-              <h2 className="text-2xl font-bold text-gray-400">API Health</h2>
-              <p className="mt-2 text-3xl font-semibold text-gray-200 animate-pulse">
-                Coming Soon
-              </p>
-              <p className="mt-3 text-gray-500">
-                A dedicated status page for monitoring our services will be available here.
-              </p>
-           </div>
+           <Card
+            step="4"
+            title="Add a Netlify Serverless Function"
+            description="Netlify Functions allow you to run backend code without managing servers. Here's how to create a simple 'ping' endpoint."
+          >
+            <p className="text-gray-400 mb-2">First, create a <code className="text-pink-400">netlify.toml</code> file in your project's root to configure your functions directory:</p>
+            <CodeBlock code={`[build]\n  command = "npm run build"\n  publish = "dist"\n  functions = "netlify/functions"`} />
+
+            <p className="text-gray-400 mt-4 mb-2">Next, create the function file at <code className="text-pink-400">netlify/functions/ping.ts</code>. Netlify will automatically handle the TypeScript compilation.</p>
+            <CodeBlock code={
+`import type { Handler } from "@netlify/functions";
+
+const handler: Handler = async (event, context) => {
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ message: "pong" }),
+    headers: { 'Content-Type': 'application/json' },
+  };
+};
+
+export { handler };`
+            } />
+            <p className="text-gray-400 mt-4">After deploying, you can test this function below or access it directly at <code className="text-pink-400">/.netlify/functions/ping</code>.</p>
+          </Card>
+
+          <Card
+            step="5"
+            title="Configure Environment Variables"
+            description="Securely manage API keys and other secrets using Netlify's environment variables. Add these in your Netlify dashboard under Site settings > Build & deploy > Environment."
+          >
+            <p className="text-gray-400 mb-2">Here is a conventional list of environment variables you'll need for various services. Add the variable names on Netlify, then fill in the values.</p>
+            <CodeBlock code={
+`# Supabase
+SUPABASE_URL=your-project-url
+SUPABASE_ANON_KEY=your-public-anon-key
+
+# Google Gemini API
+API_KEY=your-google-api-key
+
+# Stripe
+STRIPE_PUBLISHABLE_KEY=pk_live_...
+STRIPE_SECRET_KEY=sk_live_...
+
+# Brevo (formerly Sendinblue) for transactional emails
+BREVO_API_KEY=your-brevo-api-key`
+            } />
+            <p className="text-gray-400 mt-4">In your functions, you can access these with <code className="text-pink-400">process.env.YOUR_VARIABLE_NAME</code>.</p>
+          </Card>
+
+           <div className="text-center py-8 px-6 bg-gray-800/50 rounded-lg border border-gray-700">
+            <div className="flex items-center justify-center gap-4">
+              <ServerIcon className="w-8 h-8 text-gray-400" />
+              <h2 className="text-2xl font-bold text-gray-300">Live API Health Check</h2>
+            </div>
+            <p className="mt-3 text-gray-500 max-w-md mx-auto">
+              Click the button to send a request to the live <code className="text-pink-400">/ping</code> serverless function deployed on Netlify.
+            </p>
+            <div className="mt-6">
+              <button
+                onClick={handlePing}
+                disabled={apiStatus === 'loading'}
+                className="bg-cyan-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-cyan-500 transition-colors duration-300 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500"
+                aria-live="polite"
+              >
+                {apiStatus === 'loading' ? 'Pinging...' : 'Ping API Endpoint'}
+              </button>
+            </div>
+            {apiStatus !== 'idle' && (
+              <div className="mt-6 p-4 rounded-md bg-gray-900/70 border border-gray-700 max-w-md mx-auto text-left">
+                <div className="flex items-center gap-3">
+                  <span className={`flex-shrink-0 w-3 h-3 rounded-full ${statusConfig[apiStatus].color}`}></span>
+                  <div className="flex-grow">
+                    <p className={`text-sm font-semibold ${statusConfig[apiStatus].text}`}>
+                      Status: {statusConfig[apiStatus].label}
+                    </p>
+                    {apiResponse && (
+                      <p className="text-xs text-gray-400 font-mono mt-1 break-all">
+                        {apiResponse}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </main>
 
         <footer className="text-center mt-12 text-gray-500 text-sm">
