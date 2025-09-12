@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { Card } from './components/Card';
 import { CodeBlock } from './components/CodeBlock';
 import { GithubIcon, NetlifyIcon, ReactIcon, ViteIcon, ServerIcon, SupabaseIcon } from './components/icons';
+import { loadStripe } from '@stripe/stripe-js';
 
 type Status = 'idle' | 'loading' | 'success' | 'error';
 
@@ -23,6 +24,9 @@ const App: React.FC = () => {
   const [pingStatus, setPingStatus] = useState<Status>('idle');
   const [supabaseStatus, setSupabaseStatus] = useState<Status>('idle');
   const [visionStatus, setVisionStatus] = useState<Status>('idle');
+  const [geminiStatus, setGeminiStatus] = useState<Status>('idle');
+  const [stripeStatus, setStripeStatus] = useState<Status>('idle');
+  const [brevoStatus, setBrevoStatus] = useState<Status>('idle');
 
   const handlePing = useCallback(async () => {
     setPingStatus('loading');
@@ -75,6 +79,48 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const handleTestGemini = useCallback(async () => {
+    setGeminiStatus('loading');
+    try {
+      const response = await fetch('/.netlify/functions/gemini');
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      await response.json();
+      setGeminiStatus('success');
+    } catch (error) {
+      console.error("Failed to call Gemini API:", error);
+      setGeminiStatus('error');
+    }
+  }, []);
+
+  const handleTestStripe = useCallback(async () => {
+    setStripeStatus('loading');
+    try {
+      const stripe = await loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '');
+      if (!stripe) throw new Error('Stripe failed to load');
+      const response = await fetch('/.netlify/functions/stripe');
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const { clientSecret } = await response.json();
+      const pi = await stripe.retrievePaymentIntent(clientSecret);
+      if (pi.error) throw pi.error;
+      setStripeStatus('success');
+    } catch (error) {
+      console.error('Failed to call Stripe API:', error);
+      setStripeStatus('error');
+    }
+  }, []);
+
+  const handleTestBrevo = useCallback(async () => {
+    setBrevoStatus('loading');
+    try {
+      const response = await fetch('/.netlify/functions/brevo');
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      await response.json();
+      setBrevoStatus('success');
+    } catch (error) {
+      console.error('Failed to send Brevo email:', error);
+      setBrevoStatus('error');
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans p-4 sm:p-6 lg:p-8">
@@ -168,15 +214,16 @@ export { handler };`} />
 SUPABASE_URL=your-project-url
 SUPABASE_ANON_KEY=your-public-anon-key
 
-# Google Gemini API
-API_KEY=your-google-api-key
+  # Google APIs (Gemini, Cloud Vision)
+  API_KEY=your-google-api-key
 
-# Stripe
-STRIPE_PUBLISHABLE_KEY=pk_test_...
-STRIPE_SECRET_KEY=sk_test_...
+  # Stripe
+  VITE_STRIPE_PUBLISHABLE_KEY=pk_test_...
+  STRIPE_SECRET_KEY=sk_test_...
 
 # Brevo (formerly Sendinblue) for transactional emails
-BREVO_API_KEY=your-brevo-api-key`} />
+BREVO_API_KEY=your-brevo-api-key
+BREVO_TEST_EMAIL=your-email@example.com`} />
             <p className="text-gray-400 mt-4">In your functions, you can access these with <code className="text-pink-400">process.env.YOUR_VARIABLE_NAME</code>.</p>
           </Card>
           
@@ -269,6 +316,57 @@ insert into notes (title) values ('This is a test note');`} />
                     className="bg-blue-600 text-white font-semibold py-1.5 px-4 rounded-md text-sm hover:bg-blue-500 transition-colors duration-200 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-blue-500"
                   >
                     {visionStatus === 'loading' ? 'Testing...' : 'Test'}
+                  </button>
+                </div>
+              </div>
+              {/* Gemini API Test */}
+              <div className="flex items-center justify-between bg-gray-900/70 p-3 rounded-lg border border-gray-700">
+                <div>
+                  <p className="font-semibold text-gray-300">Gemini API</p>
+                  <p className="font-mono text-xs text-gray-500">/gemini</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="w-5 h-5 flex items-center justify-center"><StatusIndicator status={geminiStatus} /></div>
+                  <button
+                    onClick={handleTestGemini}
+                    disabled={geminiStatus === 'loading'}
+                    className="bg-purple-600 text-white font-semibold py-1.5 px-4 rounded-md text-sm hover:bg-purple-500 transition-colors duration-200 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-purple-500"
+                  >
+                    {geminiStatus === 'loading' ? 'Testing...' : 'Test'}
+                  </button>
+                </div>
+              </div>
+              {/* Stripe API Test */}
+              <div className="flex items-center justify-between bg-gray-900/70 p-3 rounded-lg border border-gray-700">
+                <div>
+                  <p className="font-semibold text-gray-300">Stripe API</p>
+                  <p className="font-mono text-xs text-gray-500">/stripe</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="w-5 h-5 flex items-center justify-center"><StatusIndicator status={stripeStatus} /></div>
+                  <button
+                    onClick={handleTestStripe}
+                    disabled={stripeStatus === 'loading'}
+                    className="bg-pink-600 text-white font-semibold py-1.5 px-4 rounded-md text-sm hover:bg-pink-500 transition-colors duration-200 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-pink-500"
+                  >
+                    {stripeStatus === 'loading' ? 'Testing...' : 'Test'}
+                  </button>
+                </div>
+              </div>
+              {/* Brevo Email Test */}
+              <div className="flex items-center justify-between bg-gray-900/70 p-3 rounded-lg border border-gray-700">
+                <div>
+                  <p className="font-semibold text-gray-300">Brevo Email</p>
+                  <p className="font-mono text-xs text-gray-500">/brevo</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="w-5 h-5 flex items-center justify-center"><StatusIndicator status={brevoStatus} /></div>
+                  <button
+                    onClick={handleTestBrevo}
+                    disabled={brevoStatus === 'loading'}
+                    className="bg-orange-600 text-white font-semibold py-1.5 px-4 rounded-md text-sm hover:bg-orange-500 transition-colors duration-200 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-orange-500"
+                  >
+                    {brevoStatus === 'loading' ? 'Testing...' : 'Test'}
                   </button>
                 </div>
               </div>
