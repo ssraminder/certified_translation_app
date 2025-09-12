@@ -18,3 +18,5 @@ View your app in AI Studio: https://ai.studio/apps/drive/1obfZF7oOAe0Q_QEMBWYn_F
 2. Set the `API_KEY` in [.env.local](.env.local) to your Google API key (used for both Gemini and Cloud Vision)
 3. Run the app:
    `npm run dev`
+
+The project includes sample Netlify functions for Ping, Supabase, Cloud Vision, and Gemini that you can invoke from the UI to verify your environment configuration.
