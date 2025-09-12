@@ -112,54 +112,54 @@ const QuoteRequestForm: React.FC = () => {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="bg-gray-800 p-6 rounded-lg shadow space-y-4">
-      <h2 className="text-xl font-semibold">Request a Quote</h2>
+    <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg shadow space-y-4">
+      <h2 className="text-xl font-semibold text-gray-900">Request a Quote</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium">
-            Name<span className="text-red-500">*</span>
+          <label className="block text-sm font-medium text-gray-700">
+            Name<span className="text-red-600">*</span>
           </label>
           <input
             type="text"
             name="name"
             value={form.name}
             onChange={handleChange}
-            className="mt-1 w-full p-2 rounded bg-gray-900 border border-gray-700"
+            className="mt-1 w-full p-2 rounded bg-white border border-gray-300 text-gray-900 placeholder-gray-400"
           />
-          {errors.name && <p className="text-red-400 text-sm">{errors.name}</p>}
+          {errors.name && <p className="text-red-600 text-sm">{errors.name}</p>}
         </div>
         <div>
-          <label className="block text-sm font-medium">
-            Email<span className="text-red-500">*</span>
+          <label className="block text-sm font-medium text-gray-700">
+            Email<span className="text-red-600">*</span>
           </label>
           <input
             type="email"
             name="email"
             value={form.email}
             onChange={handleChange}
-            className="mt-1 w-full p-2 rounded bg-gray-900 border border-gray-700"
+            className="mt-1 w-full p-2 rounded bg-white border border-gray-300 text-gray-900 placeholder-gray-400"
           />
-          {errors.email && <p className="text-red-400 text-sm">{errors.email}</p>}
+          {errors.email && <p className="text-red-600 text-sm">{errors.email}</p>}
         </div>
         <div>
-          <label className="block text-sm font-medium">Phone</label>
+          <label className="block text-sm font-medium text-gray-700">Phone</label>
           <input
             type="tel"
             name="phone"
             value={form.phone}
             onChange={handleChange}
-            className="mt-1 w-full p-2 rounded bg-gray-900 border border-gray-700"
+            className="mt-1 w-full p-2 rounded bg-white border border-gray-300 text-gray-900 placeholder-gray-400"
           />
         </div>
         <div>
-          <label className="block text-sm font-medium">
-            Source Language<span className="text-red-500">*</span>
+          <label className="block text-sm font-medium text-gray-700">
+            Source Language<span className="text-red-600">*</span>
           </label>
           <select
             name="sourceLanguage"
             value={form.sourceLanguage}
             onChange={handleChange}
-            className="mt-1 w-full p-2 rounded bg-gray-900 border border-gray-700"
+            className="mt-1 w-full p-2 rounded bg-white border border-gray-300 text-gray-900"
           >
             <option value="">Select</option>
             {languages.map((lang) => (
@@ -169,18 +169,18 @@ const QuoteRequestForm: React.FC = () => {
             ))}
           </select>
           {errors.sourceLanguage && (
-            <p className="text-red-400 text-sm">{errors.sourceLanguage}</p>
+            <p className="text-red-600 text-sm">{errors.sourceLanguage}</p>
           )}
         </div>
         <div>
-          <label className="block text-sm font-medium">
-            Target Language<span className="text-red-500">*</span>
+          <label className="block text-sm font-medium text-gray-700">
+            Target Language<span className="text-red-600">*</span>
           </label>
           <select
             name="targetLanguage"
             value={form.targetLanguage}
             onChange={handleChange}
-            className="mt-1 w-full p-2 rounded bg-gray-900 border border-gray-700"
+            className="mt-1 w-full p-2 rounded bg-white border border-gray-300 text-gray-900"
           >
             <option value="">Select</option>
             {languages.map((lang) => (
@@ -190,36 +190,36 @@ const QuoteRequestForm: React.FC = () => {
             ))}
           </select>
           {errors.targetLanguage && (
-            <p className="text-red-400 text-sm">{errors.targetLanguage}</p>
+            <p className="text-red-600 text-sm">{errors.targetLanguage}</p>
           )}
         </div>
         <div className="md:col-span-2">
-          <label className="block text-sm font-medium">
-            Upload File<span className="text-red-500">*</span>
+          <label className="block text-sm font-medium text-gray-700">
+            Upload File<span className="text-red-600">*</span>
           </label>
           <input
             type="file"
             accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
             onChange={handleFileChange}
-            className="mt-1 w-full text-sm text-gray-400"
+            className="mt-1 w-full text-sm text-gray-500"
           />
-          {errors.file && <p className="text-red-400 text-sm">{errors.file}</p>}
+          {errors.file && <p className="text-red-600 text-sm">{errors.file}</p>}
         </div>
       </div>
 
-      {serverError && <p className="text-red-400">{serverError}</p>}
+      {serverError && <p className="text-red-600">{serverError}</p>}
 
       <button
         type="submit"
         disabled={loading}
-        className="bg-cyan-600 text-white px-4 py-2 rounded hover:bg-cyan-500 disabled:opacity-50"
+        className="bg-[#0E3CB5] text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
       >
         {loading ? 'Submitting...' : 'Submit'}
       </button>
 
       {loading && (
         <div className="flex items-center mt-4">
-          <div className="animate-spin h-5 w-5 border-2 border-cyan-400 border-t-transparent rounded-full mr-2"></div>
+          <div className="animate-spin h-5 w-5 border-2 border-[#0E3CB5] border-t-transparent rounded-full mr-2"></div>
           <span>Processing...</span>
         </div>
       )}
@@ -228,13 +228,13 @@ const QuoteRequestForm: React.FC = () => {
         <div className="mt-4 space-y-2">
           <div>
             <h3 className="text-lg font-semibold">OCR Result</h3>
-            <pre className="whitespace-pre-wrap bg-gray-900 p-2 rounded">{result.ocr}</pre>
+            <pre className="whitespace-pre-wrap bg-gray-100 p-2 rounded text-gray-800">{result.ocr}</pre>
           </div>
           <div>
             <h3 className="text-lg font-semibold">Gemini Analysis</h3>
-            <pre className="whitespace-pre-wrap bg-gray-900 p-2 rounded">{result.analysis}</pre>
+            <pre className="whitespace-pre-wrap bg-gray-100 p-2 rounded text-gray-800">{result.analysis}</pre>
           </div>
-          <p className="text-green-400">Thank you! Your quote request has been submitted.</p>
+          <p className="text-green-600">Thank you! Your quote request has been submitted.</p>
         </div>
       )}
     </form>
