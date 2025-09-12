@@ -11,7 +11,8 @@
   "dependencies": {
     "react-dom": "^19.1.1",
     "react": "^19.1.1",
-    "@netlify/functions": "^4.2.5"
+    "@netlify/functions": "^4.2.5",
+    "@supabase/supabase-js": "^2.45.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

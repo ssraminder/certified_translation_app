@@ -91,3 +91,10 @@ export const ServerIcon: React.FC<IconProps> = ({ className }) => (
     />
   </svg>
 );
+
+export const SupabaseIcon: React.FC<IconProps> = ({ className }) => (
+    <svg className={className} viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M21.2132 19.3331C21.2132 23.7731 16.92 27.3331 12.25 27.3331C7.57999 27.3331 3.28662 23.7731 3.28662 19.3331C3.28662 14.8931 7.57999 11.3331 12.25 11.3331C16.92 11.3331 21.2132 14.8931 21.2132 19.3331Z" fill="currentColor"></path>
+        <path d="M24.7134 6.6665C24.7134 11.1065 20.42 14.6665 15.75 14.6665C11.08 14.6665 6.78662 11.1065 6.78662 6.6665C6.78662 2.2265 11.08 -1.3335 15.75 -1.3335C20.42 -1.3335 24.7134 2.2265 24.7134 6.6665Z" transform="translate(0 2)" fill="currentColor"></path>
+    </svg>
+);

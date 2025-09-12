@@ -1,54 +1,53 @@
 import React, { useState, useCallback } from 'react';
 import { Card } from './components/Card';
 import { CodeBlock } from './components/CodeBlock';
-import { GithubIcon, NetlifyIcon, ReactIcon, ViteIcon, ServerIcon } from './components/icons';
+import { GithubIcon, NetlifyIcon, ReactIcon, ViteIcon, ServerIcon, SupabaseIcon } from './components/icons';
 
-const statusConfig = {
-  idle: {
-    color: 'bg-gray-500',
-    text: 'text-gray-400',
-    label: 'Idle',
-  },
-  loading: {
-    color: 'bg-yellow-500 animate-pulse',
-    text: 'text-yellow-400',
-    label: 'Loading',
-  },
-  success: {
-    color: 'bg-green-500',
-    text: 'text-green-400',
-    label: 'Success',
-  },
-  error: {
-    color: 'bg-red-500',
-    text: 'text-red-400',
-    label: 'Error',
-  },
+type Status = 'idle' | 'loading' | 'success' | 'error';
+
+const StatusIndicator: React.FC<{ status: Status }> = ({ status }) => {
+  switch (status) {
+    case 'loading':
+      return <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-cyan-400" role="status" aria-label="Loading"></div>;
+    case 'success':
+      return <span role="img" aria-label="Success" className="text-green-400 text-lg">✓</span>;
+    case 'error':
+      return <span role="img" aria-label="Error" className="text-red-400 text-lg">✗</span>;
+    default:
+      return null;
+  }
 };
-
 
 const App: React.FC = () => {
   const GITHUB_REPO_URL = 'https://github.com/new';
-  const [apiStatus, setApiStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [apiResponse, setApiResponse] = useState<string>('');
+  const [pingStatus, setPingStatus] = useState<Status>('idle');
+  const [supabaseStatus, setSupabaseStatus] = useState<Status>('idle');
 
   const handlePing = useCallback(async () => {
-    setApiStatus('loading');
-    setApiResponse('');
+    setPingStatus('loading');
     try {
-      // Netlify functions are available at /.netlify/functions/
       const response = await fetch('/.netlify/functions/ping');
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
-      setApiResponse(data.message || 'No message received');
-      setApiStatus('success');
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      await response.json();
+      setPingStatus('success');
     } catch (error) {
       console.error("Failed to ping API:", error);
-      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
-      setApiResponse(`Failed to connect. ${errorMessage}`);
-      setApiStatus('error');
+      setPingStatus('error');
+    }
+  }, []);
+
+  const handleTestSupabase = useCallback(async () => {
+    setSupabaseStatus('loading');
+    try {
+      const response = await fetch('/.netlify/functions/supabase');
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || `HTTP error! status: ${response.status}`);
+      }
+      setSupabaseStatus('success');
+    } catch (error) {
+      console.error("Failed to connect to Supabase:", error);
+      setSupabaseStatus('error');
     }
   }, []);
 
@@ -67,6 +66,7 @@ const App: React.FC = () => {
             <ViteIcon className="h-9 w-9 text-purple-400" />
             <GithubIcon className="h-9 w-9 text-white" />
             <NetlifyIcon className="h-9 w-9 text-teal-400" />
+            <SupabaseIcon className="h-9 w-9 text-green-400" />
           </div>
         </header>
 
@@ -77,14 +77,8 @@ const App: React.FC = () => {
             description="Start by scaffolding a new project using Vite. This command sets up a modern React environment with TypeScript support out of the box."
           >
             <CodeBlock code="npm create vite@latest my-react-app -- --template react-ts" />
-            <p className="text-gray-400 mt-4">
-              After creation, navigate into your new project directory:
-            </p>
-            <CodeBlock code="cd my-react-app" />
-            <p className="text-gray-400 mt-4">
-              Then, install the necessary dependencies:
-            </p>
-            <CodeBlock code="npm install" />
+            <p className="text-gray-400 mt-4">Then, navigate into your new project directory and install dependencies:</p>
+            <CodeBlock code="cd my-react-app && npm install" />
           </Card>
 
           <Card
@@ -92,10 +86,9 @@ const App: React.FC = () => {
             title="Initialize Git & Push to GitHub"
             description="Version control is crucial. Initialize a Git repository, make your first commit, and push it to a new repository on GitHub."
           >
-            <p className="text-gray-400 mb-2">First, initialize the local repository and make your initial commit:</p>
-            <CodeBlock code="git init && git add . && git commit -m 'Initial commit'" />
+            <p className="text-gray-400 mb-2">Initialize, commit, and set your main branch:</p>
+            <CodeBlock code="git init && git add . && git commit -m 'Initial commit' && git branch -M main" />
             <p className="text-gray-400 mt-4 mb-2">Next, go to <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline">GitHub</a> to create a new repository. Then, link it to your local project and push your code.</p>
-            <CodeBlock code="git branch -M main" />
             <CodeBlock code="git remote add origin YOUR_GITHUB_REPOSITORY_URL.git" />
             <CodeBlock code="git push -u origin main" />
           </Card>
@@ -107,16 +100,15 @@ const App: React.FC = () => {
           >
             <ol className="list-decimal list-inside space-y-3 text-gray-300">
               <li>Sign up or log in to your <a href="https://app.netlify.com" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline">Netlify account</a>.</li>
-              <li>Click the "Add new site" or "Import from Git" button.</li>
-              <li>Connect to your Git provider (GitHub) and authorize access.</li>
-              <li>Select the repository you just pushed.</li>
-              <li>Netlify should automatically detect your Vite project settings. The default settings are usually correct:
+              <li>Click "Add new site" > "Import from Git".</li>
+              <li>Connect to GitHub and select the repository you just pushed.</li>
+              <li>Netlify automatically detects Vite project settings. The defaults are usually correct:
                 <ul className="list-disc list-inside ml-6 mt-2 p-3 bg-gray-800/50 rounded-md text-sm">
                   <li><strong>Build command:</strong> <code className="text-pink-400">npm run build</code></li>
                   <li><strong>Publish directory:</strong> <code className="text-pink-400">dist</code></li>
                 </ul>
               </li>
-               <li>Click "Deploy site". Netlify will build and deploy your project. Once finished, you'll get a live URL!</li>
+               <li>Click "Deploy site". Netlify will build and deploy your project, providing a live URL!</li>
             </ol>
           </Card>
 
@@ -126,11 +118,9 @@ const App: React.FC = () => {
             description="Netlify Functions allow you to run backend code without managing servers. Here's how to create a simple 'ping' endpoint."
           >
             <p className="text-gray-400 mb-2">First, create a <code className="text-pink-400">netlify.toml</code> file in your project's root to configure your functions directory:</p>
-            <CodeBlock code={`[build]\n  command = "npm run build"\n  publish = "dist"\n  functions = "netlify/functions"`} />
-
+            <CodeBlock code={`[build]\n  command = "npm run build"\n  publish = "dist"\n\n[functions]\n  directory = "netlify/functions"`} />
             <p className="text-gray-400 mt-4 mb-2">Next, create the function file at <code className="text-pink-400">netlify/functions/ping.ts</code>. Netlify will automatically handle the TypeScript compilation.</p>
-            <CodeBlock code={
-`import type { Handler } from "@netlify/functions";
+            <CodeBlock code={`import type { Handler } from "@netlify/functions";
 
 const handler: Handler = async (event, context) => {
   return {
@@ -140,9 +130,7 @@ const handler: Handler = async (event, context) => {
   };
 };
 
-export { handler };`
-            } />
-            <p className="text-gray-400 mt-4">After deploying, you can test this function below or access it directly at <code className="text-pink-400">/.netlify/functions/ping</code>.</p>
+export { handler };`} />
           </Card>
 
           <Card
@@ -150,9 +138,8 @@ export { handler };`
             title="Configure Environment Variables"
             description="Securely manage API keys and other secrets using Netlify's environment variables. Add these in your Netlify dashboard under Site settings > Build & deploy > Environment."
           >
-            <p className="text-gray-400 mb-2">Here is a conventional list of environment variables you'll need for various services. Add the variable names on Netlify, then fill in the values.</p>
-            <CodeBlock code={
-`# Supabase
+            <p className="text-gray-400 mb-2">Here is a conventional list of environment variables you'll need. Add the variable names on Netlify, then fill in the values from your service providers.</p>
+            <CodeBlock code={`# Supabase
 SUPABASE_URL=your-project-url
 SUPABASE_ANON_KEY=your-public-anon-key
 
@@ -160,13 +147,44 @@ SUPABASE_ANON_KEY=your-public-anon-key
 API_KEY=your-google-api-key
 
 # Stripe
-STRIPE_PUBLISHABLE_KEY=pk_live_...
-STRIPE_SECRET_KEY=sk_live_...
+STRIPE_PUBLISHABLE_KEY=pk_test_...
+STRIPE_SECRET_KEY=sk_test_...
 
 # Brevo (formerly Sendinblue) for transactional emails
-BREVO_API_KEY=your-brevo-api-key`
-            } />
+BREVO_API_KEY=your-brevo-api-key`} />
             <p className="text-gray-400 mt-4">In your functions, you can access these with <code className="text-pink-400">process.env.YOUR_VARIABLE_NAME</code>.</p>
+          </Card>
+          
+          <Card
+            step="6"
+            title="Integrate with Supabase"
+            description="Supabase is an open source Firebase alternative. Let's connect it to our Netlify function."
+          >
+            <ol className="list-decimal list-inside space-y-4 text-gray-300">
+              <li>Go to <a href="https://supabase.com/" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline">Supabase</a> and create a new project.</li>
+              <li>Inside your project, go to the <strong>SQL Editor</strong> and run a query to create a new table. Here's an example:
+                <CodeBlock code={`-- Create a table to store notes
+create table notes (
+  id bigserial primary key,
+  title text,
+  created_at timestamptz default now()
+);
+
+-- Enable Row Level Security (RLS)
+alter table notes enable row level security;
+
+-- Create a policy that allows public read access
+create policy "Public notes are viewable by everyone"
+on notes for select
+using ( true );
+
+-- Insert some sample data
+insert into notes (title) values ('This is a test note');`} />
+              </li>
+              <li>Go to <strong>Project Settings &gt; API</strong>. Find your Project URL and anon public key. Add these to your Netlify environment variables as <code className="text-pink-400">SUPABASE_URL</code> and <code className="text-pink-400">SUPABASE_ANON_KEY</code>.</li>
+              <li>Install the Supabase client library: <CodeBlock code="npm install @supabase/supabase-js" /></li>
+              <li>Create a new function at <code className="text-pink-400">netlify/functions/supabase.ts</code> to handle the connection.</li>
+            </ol>
           </Card>
 
            <div className="text-center py-8 px-6 bg-gray-800/50 rounded-lg border border-gray-700">
@@ -175,35 +193,44 @@ BREVO_API_KEY=your-brevo-api-key`
               <h2 className="text-2xl font-bold text-gray-300">Live API Health Check</h2>
             </div>
             <p className="mt-3 text-gray-500 max-w-md mx-auto">
-              Click the button to send a request to the live <code className="text-pink-400">/ping</code> serverless function deployed on Netlify.
+              Test your deployed serverless functions to ensure they are running correctly.
             </p>
-            <div className="mt-6">
-              <button
-                onClick={handlePing}
-                disabled={apiStatus === 'loading'}
-                className="bg-cyan-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-cyan-500 transition-colors duration-300 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500"
-                aria-live="polite"
-              >
-                {apiStatus === 'loading' ? 'Pinging...' : 'Ping API Endpoint'}
-              </button>
-            </div>
-            {apiStatus !== 'idle' && (
-              <div className="mt-6 p-4 rounded-md bg-gray-900/70 border border-gray-700 max-w-md mx-auto text-left">
-                <div className="flex items-center gap-3">
-                  <span className={`flex-shrink-0 w-3 h-3 rounded-full ${statusConfig[apiStatus].color}`}></span>
-                  <div className="flex-grow">
-                    <p className={`text-sm font-semibold ${statusConfig[apiStatus].text}`}>
-                      Status: {statusConfig[apiStatus].label}
-                    </p>
-                    {apiResponse && (
-                      <p className="text-xs text-gray-400 font-mono mt-1 break-all">
-                        {apiResponse}
-                      </p>
-                    )}
-                  </div>
+            <div className="mt-6 space-y-3 max-w-lg mx-auto">
+              {/* Ping Test */}
+              <div className="flex items-center justify-between bg-gray-900/70 p-3 rounded-lg border border-gray-700">
+                <div>
+                  <p className="font-semibold text-gray-300">API Server</p>
+                  <p className="font-mono text-xs text-gray-500">/ping</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="w-5 h-5 flex items-center justify-center"><StatusIndicator status={pingStatus} /></div>
+                  <button
+                    onClick={handlePing}
+                    disabled={pingStatus === 'loading'}
+                    className="bg-cyan-600 text-white font-semibold py-1.5 px-4 rounded-md text-sm hover:bg-cyan-500 transition-colors duration-200 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-cyan-500"
+                  >
+                    {pingStatus === 'loading' ? 'Pinging...' : 'Ping'}
+                  </button>
                 </div>
               </div>
-            )}
+              {/* Supabase Test */}
+              <div className="flex items-center justify-between bg-gray-900/70 p-3 rounded-lg border border-gray-700">
+                 <div>
+                  <p className="font-semibold text-gray-300">Supabase Connection</p>
+                  <p className="font-mono text-xs text-gray-500">/supabase</p>
+                </div>
+                <div className="flex items-center gap-4">
+                   <div className="w-5 h-5 flex items-center justify-center"><StatusIndicator status={supabaseStatus} /></div>
+                  <button
+                    onClick={handleTestSupabase}
+                    disabled={supabaseStatus === 'loading'}
+                    className="bg-green-600 text-white font-semibold py-1.5 px-4 rounded-md text-sm hover:bg-green-500 transition-colors duration-200 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-green-500"
+                  >
+                    {supabaseStatus === 'loading' ? 'Testing...' : 'Test'}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </main>
 
