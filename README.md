@@ -15,7 +15,7 @@ View your app in AI Studio: https://ai.studio/apps/drive/1obfZF7oOAe0Q_QEMBWYn_F
 
 1. Install dependencies:
    `npm install`
-2. Set the required keys in [.env.local](.env.local), including `API_KEY` (Google), `STRIPE_PUBLISHABLE_KEY`, `STRIPE_SECRET_KEY`, `BREVO_API_KEY`, and `BREVO_TEST_EMAIL`
+2. Set the required keys in [.env.local](.env.local): `API_KEY` (Google - used for both Gemini and Cloud Vision), `STRIPE_PUBLISHABLE_KEY`, `STRIPE_SECRET_KEY`, `BREVO_API_KEY`, and `BREVO_TEST_EMAIL`
 3. Run the app:
    `npm run dev`
 
