@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { Card } from './components/Card';
 import { CodeBlock } from './components/CodeBlock';
 import { GithubIcon, NetlifyIcon, ReactIcon, ViteIcon, ServerIcon, SupabaseIcon } from './components/icons';
+import QuoteRequestForm from './components/QuoteRequestForm';
 
 type Status = 'idle' | 'loading' | 'success' | 'error';
 
@@ -138,6 +139,7 @@ const App: React.FC = () => {
         </header>
 
         <main className="space-y-8">
+          <QuoteRequestForm />
           <Card
             step="1"
             title="Create React + Vite + TypeScript Project"
