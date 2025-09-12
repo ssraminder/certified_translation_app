@@ -112,7 +112,7 @@ const QuoteRequestForm: React.FC = () => {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="bg-gray-800 p-6 rounded-lg shadow space-y-4">
+    <form onSubmit={handleSubmit} className="bg-white/10 p-6 rounded-lg shadow space-y-4">
       <h2 className="text-xl font-semibold">Request a Quote</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
@@ -124,7 +124,7 @@ const QuoteRequestForm: React.FC = () => {
             name="name"
             value={form.name}
             onChange={handleChange}
-            className="mt-1 w-full p-2 rounded bg-gray-900 border border-gray-700"
+            className="mt-1 w-full p-2 rounded bg-white/10 border border-white/20 text-white placeholder-[#ACACAC]"
           />
           {errors.name && <p className="text-red-400 text-sm">{errors.name}</p>}
         </div>
@@ -137,7 +137,7 @@ const QuoteRequestForm: React.FC = () => {
             name="email"
             value={form.email}
             onChange={handleChange}
-            className="mt-1 w-full p-2 rounded bg-gray-900 border border-gray-700"
+            className="mt-1 w-full p-2 rounded bg-white/10 border border-white/20 text-white placeholder-[#ACACAC]"
           />
           {errors.email && <p className="text-red-400 text-sm">{errors.email}</p>}
         </div>
@@ -148,7 +148,7 @@ const QuoteRequestForm: React.FC = () => {
             name="phone"
             value={form.phone}
             onChange={handleChange}
-            className="mt-1 w-full p-2 rounded bg-gray-900 border border-gray-700"
+            className="mt-1 w-full p-2 rounded bg-white/10 border border-white/20 text-white placeholder-[#ACACAC]"
           />
         </div>
         <div>
@@ -159,7 +159,7 @@ const QuoteRequestForm: React.FC = () => {
             name="sourceLanguage"
             value={form.sourceLanguage}
             onChange={handleChange}
-            className="mt-1 w-full p-2 rounded bg-gray-900 border border-gray-700"
+            className="mt-1 w-full p-2 rounded bg-white/10 border border-white/20 text-white"
           >
             <option value="">Select</option>
             {languages.map((lang) => (
@@ -180,7 +180,7 @@ const QuoteRequestForm: React.FC = () => {
             name="targetLanguage"
             value={form.targetLanguage}
             onChange={handleChange}
-            className="mt-1 w-full p-2 rounded bg-gray-900 border border-gray-700"
+            className="mt-1 w-full p-2 rounded bg-white/10 border border-white/20 text-white"
           >
             <option value="">Select</option>
             {languages.map((lang) => (
@@ -201,7 +201,7 @@ const QuoteRequestForm: React.FC = () => {
             type="file"
             accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
             onChange={handleFileChange}
-            className="mt-1 w-full text-sm text-gray-400"
+            className="mt-1 w-full text-sm text-[#ACACAC]"
           />
           {errors.file && <p className="text-red-400 text-sm">{errors.file}</p>}
         </div>
@@ -228,11 +228,11 @@ const QuoteRequestForm: React.FC = () => {
         <div className="mt-4 space-y-2">
           <div>
             <h3 className="text-lg font-semibold">OCR Result</h3>
-            <pre className="whitespace-pre-wrap bg-gray-900 p-2 rounded">{result.ocr}</pre>
+            <pre className="whitespace-pre-wrap bg-white/10 p-2 rounded text-white">{result.ocr}</pre>
           </div>
           <div>
             <h3 className="text-lg font-semibold">Gemini Analysis</h3>
-            <pre className="whitespace-pre-wrap bg-gray-900 p-2 rounded">{result.analysis}</pre>
+            <pre className="whitespace-pre-wrap bg-white/10 p-2 rounded text-white">{result.analysis}</pre>
           </div>
           <p className="text-green-400">Thank you! Your quote request has been submitted.</p>
         </div>

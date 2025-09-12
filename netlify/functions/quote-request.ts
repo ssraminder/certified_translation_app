@@ -11,13 +11,13 @@ const handler: Handler = async (event) => {
     return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
   }
 
-  const { SUPABASE_URL, SUPABASE_ANON_KEY, API_KEY } = process.env;
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, API_KEY } = process.env;
 
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !API_KEY) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !API_KEY) {
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'Missing environment variables' }),
+      body: JSON.stringify({ error: 'Missing Supabase service role key or other environment variables' }),
     };
   }
 
@@ -38,7 +38,7 @@ const handler: Handler = async (event) => {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing required fields' }) };
     }
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const buffer = Buffer.from(fileBase64, 'base64');
     const path = `orders/${Date.now()}-${fileName}`;
