@@ -8,11 +8,16 @@ import type { Handler, HandlerEvent, HandlerContext } from "@netlify/functions";
 const handler: Handler = async (event: HandlerEvent, context: HandlerContext) => {
   const { SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
 
+  const headers = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*', // Allow requests from any origin
+  };
+
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     return {
       statusCode: 500,
       body: JSON.stringify({ error: 'Supabase environment variables (SUPABASE_URL, SUPABASE_ANON_KEY) are not set in the Netlify dashboard.' }),
-      headers: { 'Content-Type': 'application/json' },
+      headers,
     };
   }
 
@@ -33,7 +38,7 @@ const handler: Handler = async (event: HandlerEvent, context: HandlerContext) =>
     return {
       statusCode: 200,
       body: JSON.stringify({ message: 'Successfully connected to Supabase and performed a query.' }),
-      headers: { 'Content-Type': 'application/json' },
+      headers,
     };
   } catch (error: any) {
     console.error('Supabase connection error:', error);
@@ -43,7 +48,7 @@ const handler: Handler = async (event: HandlerEvent, context: HandlerContext) =>
         error: 'Failed to connect to Supabase.',
         details: error.message || 'An unknown error occurred.',
       }),
-      headers: { 'Content-Type': 'application/json' },
+      headers,
     };
   }
 };

@@ -40,16 +40,27 @@ const App: React.FC = () => {
     setSupabaseStatus('loading');
     try {
       const response = await fetch('/.netlify/functions/supabase');
+
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || `HTTP error! status: ${response.status}`);
+        let errorMessage;
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const errorData = await response.json();
+          errorMessage = errorData.details || errorData.error || `Server error: ${response.status}`;
+        } else {
+          errorMessage = await response.text();
+        }
+        throw new Error(errorMessage);
       }
+
+      await response.json();
       setSupabaseStatus('success');
     } catch (error) {
-      console.error("Failed to connect to Supabase:", error);
+      console.error("Failed to connect to Supabase:", error instanceof Error ? error.message : String(error));
       setSupabaseStatus('error');
     }
   }, []);
+
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans p-4 sm:p-6 lg:p-8">
@@ -182,7 +193,7 @@ using ( true );
 insert into notes (title) values ('This is a test note');`} />
               </li>
               <li>Go to <strong>Project Settings &gt; API</strong>. Find your Project URL and anon public key. Add these to your Netlify environment variables as <code className="text-pink-400">SUPABASE_URL</code> and <code className="text-pink-400">SUPABASE_ANON_KEY</code>.</li>
-              <li>Install the Supabase client library: <CodeBlock code="npm install @supabase/supabase-js" /></li>
+              <li>Install the Supabase client library: <CodeBlock code="npm install @supabase/supabase-js" /> This will add it to your `package.json`.</li>
               <li>Create a new function at <code className="text-pink-400">netlify/functions/supabase.ts</code> to handle the connection.</li>
             </ol>
           </Card>
