@@ -24,6 +24,8 @@ const App: React.FC = () => {
   const [supabaseStatus, setSupabaseStatus] = useState<Status>('idle');
   const [visionStatus, setVisionStatus] = useState<Status>('idle');
   const [geminiStatus, setGeminiStatus] = useState<Status>('idle');
+  const [stripeStatus, setStripeStatus] = useState<Status>('idle');
+  const [brevoStatus, setBrevoStatus] = useState<Status>('idle');
 
   const handlePing = useCallback(async () => {
     setPingStatus('loading');
@@ -89,6 +91,32 @@ const App: React.FC = () => {
     }
   }, []);
 
+
+  const handleTestStripe = useCallback(async () => {
+    setStripeStatus('loading');
+    try {
+      const response = await fetch('/.netlify/functions/stripe');
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      await response.json();
+      setStripeStatus('success');
+    } catch (error) {
+      console.error("Failed to call Stripe API:", error);
+      setStripeStatus('error');
+    }
+  }, []);
+
+  const handleTestBrevo = useCallback(async () => {
+    setBrevoStatus('loading');
+    try {
+      const response = await fetch('/.netlify/functions/brevo');
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      await response.json();
+      setBrevoStatus('success');
+    } catch (error) {
+      console.error("Failed to call Brevo API:", error);
+      setBrevoStatus('error');
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans p-4 sm:p-6 lg:p-8">
@@ -300,6 +328,40 @@ insert into notes (title) values ('This is a test note');`} />
                     className="bg-purple-600 text-white font-semibold py-1.5 px-4 rounded-md text-sm hover:bg-purple-500 transition-colors duration-200 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-purple-500"
                   >
                     {geminiStatus === 'loading' ? 'Testing...' : 'Test'}
+                  </button>
+                </div>
+              </div>
+              {/* Stripe API Test */}
+              <div className="flex items-center justify-between bg-gray-900/70 p-3 rounded-lg border border-gray-700">
+                <div>
+                  <p className="font-semibold text-gray-300">Stripe API</p>
+                  <p className="font-mono text-xs text-gray-500">/stripe</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="w-5 h-5 flex items-center justify-center"><StatusIndicator status={stripeStatus} /></div>
+                  <button
+                    onClick={handleTestStripe}
+                    disabled={stripeStatus === 'loading'}
+                    className="bg-red-600 text-white font-semibold py-1.5 px-4 rounded-md text-sm hover:bg-red-500 transition-colors duration-200 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-red-500"
+                  >
+                    {stripeStatus === 'loading' ? 'Testing...' : 'Test'}
+                  </button>
+                </div>
+              </div>
+              {/* Brevo API Test */}
+              <div className="flex items-center justify-between bg-gray-900/70 p-3 rounded-lg border border-gray-700">
+                <div>
+                  <p className="font-semibold text-gray-300">Brevo API</p>
+                  <p className="font-mono text-xs text-gray-500">/brevo</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="w-5 h-5 flex items-center justify-center"><StatusIndicator status={brevoStatus} /></div>
+                  <button
+                    onClick={handleTestBrevo}
+                    disabled={brevoStatus === 'loading'}
+                    className="bg-orange-600 text-white font-semibold py-1.5 px-4 rounded-md text-sm hover:bg-orange-500 transition-colors duration-200 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-orange-500"
+                  >
+                    {brevoStatus === 'loading' ? 'Testing...' : 'Test'}
                   </button>
                 </div>
               </div>
