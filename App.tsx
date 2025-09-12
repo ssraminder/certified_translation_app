@@ -23,6 +23,7 @@ const App: React.FC = () => {
   const [pingStatus, setPingStatus] = useState<Status>('idle');
   const [supabaseStatus, setSupabaseStatus] = useState<Status>('idle');
   const [visionStatus, setVisionStatus] = useState<Status>('idle');
+  const [geminiStatus, setGeminiStatus] = useState<Status>('idle');
 
   const handlePing = useCallback(async () => {
     setPingStatus('loading');
@@ -72,6 +73,19 @@ const App: React.FC = () => {
     } catch (error) {
       console.error("Failed to call Vision API:", error);
       setVisionStatus('error');
+    }
+  }, []);
+
+  const handleTestGemini = useCallback(async () => {
+    setGeminiStatus('loading');
+    try {
+      const response = await fetch('/.netlify/functions/gemini');
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      await response.json();
+      setGeminiStatus('success');
+    } catch (error) {
+      console.error("Failed to call Gemini API:", error);
+      setGeminiStatus('error');
     }
   }, []);
 
@@ -168,8 +182,8 @@ export { handler };`} />
 SUPABASE_URL=your-project-url
 SUPABASE_ANON_KEY=your-public-anon-key
 
-# Google Gemini API
-API_KEY=your-google-api-key
+  # Google APIs (Gemini, Cloud Vision)
+  API_KEY=your-google-api-key
 
 # Stripe
 STRIPE_PUBLISHABLE_KEY=pk_test_...
@@ -269,6 +283,23 @@ insert into notes (title) values ('This is a test note');`} />
                     className="bg-blue-600 text-white font-semibold py-1.5 px-4 rounded-md text-sm hover:bg-blue-500 transition-colors duration-200 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-blue-500"
                   >
                     {visionStatus === 'loading' ? 'Testing...' : 'Test'}
+                  </button>
+                </div>
+              </div>
+              {/* Gemini API Test */}
+              <div className="flex items-center justify-between bg-gray-900/70 p-3 rounded-lg border border-gray-700">
+                <div>
+                  <p className="font-semibold text-gray-300">Gemini API</p>
+                  <p className="font-mono text-xs text-gray-500">/gemini</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="w-5 h-5 flex items-center justify-center"><StatusIndicator status={geminiStatus} /></div>
+                  <button
+                    onClick={handleTestGemini}
+                    disabled={geminiStatus === 'loading'}
+                    className="bg-purple-600 text-white font-semibold py-1.5 px-4 rounded-md text-sm hover:bg-purple-500 transition-colors duration-200 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-purple-500"
+                  >
+                    {geminiStatus === 'loading' ? 'Testing...' : 'Test'}
                   </button>
                 </div>
               </div>
