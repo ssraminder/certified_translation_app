@@ -111,7 +111,7 @@ const App: React.FC = () => {
           >
             <ol className="list-decimal list-inside space-y-3 text-gray-300">
               <li>Sign up or log in to your <a href="https://app.netlify.com" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline">Netlify account</a>.</li>
-              <li>Click "Add new site" > "Import from Git".</li>
+                <li>Click "Add new site" &gt; "Import from Git".</li>
               <li>Connect to GitHub and select the repository you just pushed.</li>
               <li>Netlify automatically detects Vite project settings. The defaults are usually correct:
                 <ul className="list-disc list-inside ml-6 mt-2 p-3 bg-gray-800/50 rounded-md text-sm">
