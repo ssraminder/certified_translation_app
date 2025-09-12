@@ -22,6 +22,7 @@ const App: React.FC = () => {
   const GITHUB_REPO_URL = 'https://github.com/new';
   const [pingStatus, setPingStatus] = useState<Status>('idle');
   const [supabaseStatus, setSupabaseStatus] = useState<Status>('idle');
+  const [visionStatus, setVisionStatus] = useState<Status>('idle');
 
   const handlePing = useCallback(async () => {
     setPingStatus('loading');
@@ -58,6 +59,19 @@ const App: React.FC = () => {
     } catch (error) {
       console.error("Failed to connect to Supabase:", error instanceof Error ? error.message : String(error));
       setSupabaseStatus('error');
+    }
+  }, []);
+
+  const handleTestVision = useCallback(async () => {
+    setVisionStatus('loading');
+    try {
+      const response = await fetch('/.netlify/functions/vision');
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      await response.json();
+      setVisionStatus('success');
+    } catch (error) {
+      console.error("Failed to call Vision API:", error);
+      setVisionStatus('error');
     }
   }, []);
 
@@ -226,18 +240,35 @@ insert into notes (title) values ('This is a test note');`} />
               </div>
               {/* Supabase Test */}
               <div className="flex items-center justify-between bg-gray-900/70 p-3 rounded-lg border border-gray-700">
-                 <div>
-                  <p className="font-semibold text-gray-300">Supabase Connection</p>
-                  <p className="font-mono text-xs text-gray-500">/supabase</p>
+                <div>
+                 <p className="font-semibold text-gray-300">Supabase Connection</p>
+                 <p className="font-mono text-xs text-gray-500">/supabase</p>
+               </div>
+               <div className="flex items-center gap-4">
+                  <div className="w-5 h-5 flex items-center justify-center"><StatusIndicator status={supabaseStatus} /></div>
+                 <button
+                   onClick={handleTestSupabase}
+                   disabled={supabaseStatus === 'loading'}
+                   className="bg-green-600 text-white font-semibold py-1.5 px-4 rounded-md text-sm hover:bg-green-500 transition-colors duration-200 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-green-500"
+                 >
+                   {supabaseStatus === 'loading' ? 'Testing...' : 'Test'}
+                 </button>
+               </div>
+              </div>
+              {/* Vision API Test */}
+              <div className="flex items-center justify-between bg-gray-900/70 p-3 rounded-lg border border-gray-700">
+                <div>
+                  <p className="font-semibold text-gray-300">Vision API</p>
+                  <p className="font-mono text-xs text-gray-500">/vision</p>
                 </div>
                 <div className="flex items-center gap-4">
-                   <div className="w-5 h-5 flex items-center justify-center"><StatusIndicator status={supabaseStatus} /></div>
+                  <div className="w-5 h-5 flex items-center justify-center"><StatusIndicator status={visionStatus} /></div>
                   <button
-                    onClick={handleTestSupabase}
-                    disabled={supabaseStatus === 'loading'}
-                    className="bg-green-600 text-white font-semibold py-1.5 px-4 rounded-md text-sm hover:bg-green-500 transition-colors duration-200 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-green-500"
+                    onClick={handleTestVision}
+                    disabled={visionStatus === 'loading'}
+                    className="bg-blue-600 text-white font-semibold py-1.5 px-4 rounded-md text-sm hover:bg-blue-500 transition-colors duration-200 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-blue-500"
                   >
-                    {supabaseStatus === 'loading' ? 'Testing...' : 'Test'}
+                    {visionStatus === 'loading' ? 'Testing...' : 'Test'}
                   </button>
                 </div>
               </div>
