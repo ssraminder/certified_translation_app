@@ -1,0 +1,5 @@
+{
+  "name": "React Deployment Guide",
+  "description": "A step-by-step guide to setting up a React + Vite + TypeScript project, initializing a git repository, pushing to GitHub, and deploying to Netlify, with a placeholder for future API health status.",
+  "requestFramePermissions": []
+}
