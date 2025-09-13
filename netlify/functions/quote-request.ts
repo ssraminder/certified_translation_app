@@ -50,19 +50,6 @@ const handler: Handler = async (event) => {
 
     if (uploadError) throw uploadError;
 
-    const { data: inserted, error: insertError } = await supabase
-      .from('orders')
-      .insert({
-        name,
-        email,
-        phone,
-        data: { sourceLang, targetLang, filePath: path },
-      })
-      .select('id')
-      .single();
-
-    if (insertError) throw insertError;
-
     // Google Vision OCR
     const visionBody = {
       requests: [
@@ -120,6 +107,19 @@ const handler: Handler = async (event) => {
     const geminiData = await geminiResp.json();
     const analysis =
       geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+    const { data: inserted, error: insertError } = await supabase
+      .from('orders')
+      .insert({
+        name,
+        email,
+        phone,
+        data: { sourceLang, targetLang, filePath: path, ocrText, analysis },
+      })
+      .select('id')
+      .single();
+
+    if (insertError) throw insertError;
 
     return {
       statusCode: 200,
