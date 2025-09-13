@@ -1,6 +1,4 @@
 import React, { useState, useRef } from 'react';
-import AnalysisOverlay from './AnalysisOverlay';
-import { calculateQuote, FileAnalysis, QuoteTotals, appSettings } from '../helpers/quoteCalculator';
 
 interface FormState {
   customerName: string;
@@ -22,17 +20,13 @@ const initialForm: FormState = {
   uploadedFiles: [],
 };
 
-interface Result extends QuoteTotals {
-  quoteId: string;
-  files: FileAnalysis[];
+interface QuoteRequestFormProps {
+  onJobStart: (jobId: string) => void;
 }
 
-const QuoteRequestForm: React.FC = () => {
+const QuoteRequestForm: React.FC<QuoteRequestFormProps> = ({ onJobStart }) => {
   const [form, setForm] = useState<FormState>(initialForm);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<Result | null>(null);
-  const [quoteCounter, setQuoteCounter] = useState(() => Math.floor(Math.random() * 90000));
   const fileInput = useRef<HTMLInputElement | null>(null);
 
   const validate = () => {
@@ -75,12 +69,6 @@ const QuoteRequestForm: React.FC = () => {
     setForm(prev => ({ ...prev, uploadedFiles: prev.uploadedFiles.filter((_, i) => i !== index) }));
   };
 
-  const complexityMap: Record<'Easy' | 'Medium' | 'Hard', number> = {
-    Easy: 1.0,
-    Medium: 1.1,
-    Hard: 1.2,
-  };
-
   const fileToBase64 = (file: File) =>
     new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -95,63 +83,34 @@ const QuoteRequestForm: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setResult(null);
     if (!validate()) return;
-    setLoading(true);
-    try {
-      const analyses: FileAnalysis[] = [];
-      for (const file of form.uploadedFiles) {
-        const base64 = await fileToBase64(file);
-        const response = await fetch('/.netlify/functions/quote-request', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: form.customerName,
-            email: form.customerEmail,
-            phone: form.customerPhone,
-            sourceLang: form.sourceLanguage,
-            targetLang: form.targetLanguage,
-            fileName: file.name,
-            fileType: file.type,
-            fileBase64: base64,
-          }),
-        });
-
-        const data = await response.json();
-        const wordCount = data.ocrText ? data.ocrText.trim().split(/\s+/).length : 0;
-        const complexity: 'Easy' | 'Medium' | 'Hard' = 'Medium'; // assumption
-        const complexityMultiplier = complexityMap[complexity];
-        const ppwc = wordCount * complexityMultiplier;
-        const billablePages = Math.ceil((ppwc / appSettings.wordsPerPage) * 10) / 10;
-        analyses.push({
-          fileId: data.id?.toString() || file.name,
-          filename: file.name,
-          pageCount: 1,
-          pages: [
-            {
-              pageNumber: 1,
-              wordCount,
-              complexity,
-              complexityMultiplier,
-              ppwc,
-              billablePages,
-            },
-          ],
-        });
-      }
-
-      const quoteTotals = calculateQuote(analyses, form);
-      const id = `CS${(quoteCounter + 1).toString().padStart(5, '0')}`;
-      setQuoteCounter(prev => prev + 1);
-      setResult({ quoteId: id, files: analyses, ...quoteTotals });
-    } finally {
-      setLoading(false);
+    const file = form.uploadedFiles[0];
+    const base64 = await fileToBase64(file);
+    const response = await fetch('/.netlify/functions/quote-start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: form.customerName,
+        email: form.customerEmail,
+        phone: form.customerPhone,
+        sourceLang: form.sourceLanguage,
+        targetLang: form.targetLanguage,
+        intendedUse: form.intendedUse,
+        fileName: file.name,
+        fileType: file.type,
+        fileBase64: base64,
+      }),
+    });
+    const data = await response.json();
+    if (data.jobId) {
+      onJobStart(data.jobId);
+    } else {
+      alert('Failed to start job');
     }
   };
 
   return (
     <div className="max-w-5xl mx-auto p-4">
-      <AnalysisOverlay visible={loading} />
       <form onSubmit={handleSubmit} className="space-y-6" aria-label="Quote request form">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -203,9 +162,7 @@ const QuoteRequestForm: React.FC = () => {
           </div>
         </div>
 
-        <div
-          className="border-2 border-dashed rounded p-4 text-center" onDragOver={e => e.preventDefault()} onDrop={handleDrop}
-        >
+        <div className="border-2 border-dashed rounded p-4 text-center" onDragOver={e => e.preventDefault()} onDrop={handleDrop}>
           <p className="mb-2">Drag & drop files here or <button type="button" onClick={() => fileInput.current?.click()} className="text-[var(--accent-color)] underline">browse</button></p>
           <input ref={fileInput} type="file" multiple onChange={handleFileInput} className="hidden" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" />
           {errors.uploadedFiles && <p className="text-[var(--error-color)] text-sm">{errors.uploadedFiles}</p>}
@@ -220,58 +177,9 @@ const QuoteRequestForm: React.FC = () => {
         </div>
 
         <button type="submit" className="w-full md:w-auto bg-[var(--accent-color)] hover:bg-[var(--accent-color-dark)] text-white py-2 px-6 rounded">
-          {loading ? 'Analyzing...' : 'Get Quote'}
+          Get Quote
         </button>
       </form>
-
-      {result && (
-        <div className="mt-8 space-y-4">
-          <h2 className="text-xl font-semibold">Quote ID: {result.quoteId}</h2>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm" role="table">
-              <thead>
-                <tr className="bg-gray-100 dark:bg-slate-700">
-                  <th className="p-2 text-left">File</th>
-                  <th className="p-2 text-left">Page</th>
-                  <th className="p-2 text-left">Wordcount</th>
-                  <th className="p-2 text-left">Complexity</th>
-                  <th className="p-2 text-left">Multiplier</th>
-                  <th className="p-2 text-left">PPWC</th>
-                  <th className="p-2 text-left">Billable Pages</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.files.map(f => (
-                  <React.Fragment key={f.fileId}>
-                    <tr className="bg-gray-50 dark:bg-slate-700 font-semibold">
-                      <td className="p-2" colSpan={7}>{f.filename}</td>
-                    </tr>
-                    {f.pages.map(p => (
-                      <tr key={p.pageNumber} className="border-b">
-                        <td className="p-2"></td>
-                        <td className="p-2">{p.pageNumber}</td>
-                        <td className="p-2">{p.wordCount}</td>
-                        <td className="p-2">{p.complexity}</td>
-                        <td className="p-2">{p.complexityMultiplier.toFixed(2)}</td>
-                        <td className="p-2">{p.ppwc.toFixed(2)}</td>
-                        <td className="p-2">{p.billablePages.toFixed(2)}</td>
-                      </tr>
-                    ))}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="p-4 border rounded grid grid-cols-1 md:grid-cols-2 gap-2">
-            <p><strong>Per-page rate:</strong> ${result.perPageRate.toFixed(2)}</p>
-            <p><strong>Total billable pages:</strong> {result.totalBillablePages.toFixed(2)}</p>
-            <p><strong>Certification:</strong> {result.certType} (${result.certPrice.toFixed(2)})</p>
-            <p className="text-lg font-semibold">Final Total: ${result.quoteTotal.toFixed(2)}</p>
-          </div>
-          <p className="text-sm text-gray-600 dark:text-gray-300">Billable pages are calculated from word count and complexity. Minimum charge of one page per quote.</p>
-        </div>
-      )}
     </div>
   );
 };
