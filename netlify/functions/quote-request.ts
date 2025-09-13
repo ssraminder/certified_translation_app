@@ -50,25 +50,17 @@ const handler: Handler = async (event) => {
 
     if (uploadError) throw uploadError;
 
-    const { data: inserted, error: insertError } = await supabase
-      .from('orders')
-      .insert({
-        name,
-        email,
-        phone,
-        data: { sourceLang, targetLang, filePath: path },
-      })
-      .select('id')
-      .single();
-
-    if (insertError) throw insertError;
-
     // Google Vision OCR
+    const featureType =
+      fileType === 'application/pdf' || fileType === 'image/tiff'
+        ? 'DOCUMENT_TEXT_DETECTION'
+        : 'TEXT_DETECTION';
+
     const visionBody = {
       requests: [
         {
           image: { content: fileBase64 },
-          features: [{ type: 'TEXT_DETECTION' }],
+          features: [{ type: featureType }],
         },
       ],
     };
@@ -96,11 +88,15 @@ const handler: Handler = async (event) => {
         {
           parts: [
             {
-              text: `Analyze the following text and summarize any key information:\n${ocrText}`,
+              text:
+                'Given the OCR text below, identify the language and classify overall complexity as Easy, Medium, or Hard. ' +
+                'Respond with JSON: {"language":"<language>","complexity":"<Easy|Medium|Hard>"}.\n\n' +
+                ocrText,
             },
           ],
         },
       ],
+      generationConfig: { responseMimeType: 'application/json' },
     };
 
     const geminiResp = await fetch(
@@ -118,13 +114,35 @@ const handler: Handler = async (event) => {
     }
 
     const geminiData = await geminiResp.json();
-    const analysis =
-      geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    let language = '';
+    let complexity = '';
+    try {
+      const parsed = JSON.parse(
+        geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '{}'
+      );
+      language = parsed.language || '';
+      complexity = parsed.complexity || '';
+    } catch {
+      // fall back to empty strings if parsing fails
+    }
+
+    const { data: inserted, error: insertError } = await supabase
+      .from('orders')
+      .insert({
+        name,
+        email,
+        phone,
+        data: { sourceLang, targetLang, filePath: path, ocrText, language, complexity },
+      })
+      .select('id')
+      .single();
+
+    if (insertError) throw insertError;
 
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ id: inserted.id, ocrText, analysis }),
+      body: JSON.stringify({ id: inserted.id, ocrText, language, complexity }),
     };
   } catch (error: any) {
     return {

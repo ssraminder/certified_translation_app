@@ -1,5 +1,8 @@
 import React, { useState, useRef } from 'react';
-import { analyzeFiles, calculateQuote, FileAnalysis, QuoteTotals } from '../helpers/quoteCalculator';
+import AnalysisOverlay from './AnalysisOverlay';
+import { calculateQuote, FileAnalysis, appSettings } from '../helpers/quoteCalculator';
+import QuoteScreen from './QuoteScreen';
+import { QuoteResult } from '../helpers/quoteTypes';
 
 interface FormState {
   customerName: string;
@@ -21,16 +24,11 @@ const initialForm: FormState = {
   uploadedFiles: [],
 };
 
-interface Result extends QuoteTotals {
-  quoteId: string;
-  files: FileAnalysis[];
-}
-
 const QuoteRequestForm: React.FC = () => {
   const [form, setForm] = useState<FormState>(initialForm);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<Result | null>(null);
+  const [result, setResult] = useState<QuoteResult | null>(null);
   const [quoteCounter, setQuoteCounter] = useState(() => Math.floor(Math.random() * 90000));
   const fileInput = useRef<HTMLInputElement | null>(null);
 
@@ -74,15 +72,79 @@ const QuoteRequestForm: React.FC = () => {
     setForm(prev => ({ ...prev, uploadedFiles: prev.uploadedFiles.filter((_, i) => i !== index) }));
   };
 
+  const complexityMap: Record<'Easy' | 'Medium' | 'Hard', number> = {
+    Easy: 1.0,
+    Medium: 1.1,
+    Hard: 1.2,
+  };
+
+  const fileToBase64 = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setResult(null);
     if (!validate()) return;
     setLoading(true);
     try {
-      const analyses = await analyzeFiles(form.uploadedFiles);
+      const analyses: FileAnalysis[] = [];
+      for (const file of form.uploadedFiles) {
+        const base64 = await fileToBase64(file);
+        const response = await fetch('/.netlify/functions/quote-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: form.customerName,
+            email: form.customerEmail,
+            phone: form.customerPhone,
+            sourceLang: form.sourceLanguage,
+            targetLang: form.targetLanguage,
+            fileName: file.name,
+            fileType: file.type,
+            fileBase64: base64,
+          }),
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text);
+        }
+
+        const data = await response.json();
+        const wordCount = data.ocrText ? data.ocrText.trim().split(/\s+/).length : 0;
+        const complexity: 'Easy' | 'Medium' | 'Hard' =
+          data.complexity || 'Medium';
+        const complexityMultiplier = complexityMap[complexity];
+        const ppwc = wordCount * complexityMultiplier;
+        const billablePages = Math.ceil((ppwc / appSettings.wordsPerPage) * 10) / 10;
+        analyses.push({
+          fileId: data.id?.toString() || file.name,
+          filename: file.name,
+          pageCount: 1,
+          pages: [
+            {
+              pageNumber: 1,
+              wordCount,
+              complexity,
+              complexityMultiplier,
+              ppwc,
+              billablePages,
+            },
+          ],
+        });
+      }
+
       const quoteTotals = calculateQuote(analyses, form);
-      const id = `CS${(quoteCounter + 1).toString().padStart(5,'0')}`;
+      const id = `CS${(quoteCounter + 1).toString().padStart(5, '0')}`;
       setQuoteCounter(prev => prev + 1);
       setResult({ quoteId: id, files: analyses, ...quoteTotals });
     } finally {
@@ -90,58 +152,66 @@ const QuoteRequestForm: React.FC = () => {
     }
   };
 
+  const handlePay = () => {
+    if (!result) return;
+    // Assumes existing payment endpoint accepts quoteId and handles checkout.
+    window.location.href = `/.netlify/functions/stripe-checkout?quoteId=${result.quoteId}`;
+  };
+
   return (
     <div className="max-w-5xl mx-auto p-4">
-      <form onSubmit={handleSubmit} className="space-y-6" aria-label="Quote request form">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label htmlFor="customerName" className="block text-sm font-medium">Name<span className="text-[var(--error-color)]">*</span></label>
-            <input id="customerName" name="customerName" value={form.customerName} onChange={handleChange} className="mt-1 w-full p-2 border rounded" />
-            {errors.customerName && <p className="text-[var(--error-color)] text-sm">{errors.customerName}</p>}
+      <AnalysisOverlay visible={loading} />
+      {!result ? (
+        <form onSubmit={handleSubmit} className="space-y-6" aria-label="Quote request form">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="customerName" className="block text-sm font-medium">Name<span className="text-[var(--error-color)]">*</span></label>
+              <input id="customerName" name="customerName" value={form.customerName} onChange={handleChange} className="mt-1 w-full p-2 border rounded" />
+              {errors.customerName && <p className="text-[var(--error-color)] text-sm">{errors.customerName}</p>}
+            </div>
+            <div>
+              <label htmlFor="customerEmail" className="block text-sm font-medium">Email<span className="text-[var(--error-color)]">*</span></label>
+              <input id="customerEmail" type="email" name="customerEmail" value={form.customerEmail} onChange={handleChange} className="mt-1 w-full p-2 border rounded" />
+              {errors.customerEmail && <p className="text-[var(--error-color)] text-sm">{errors.customerEmail}</p>}
+            </div>
+            <div>
+              <label htmlFor="customerPhone" className="block text-sm font-medium">Phone</label>
+              <input id="customerPhone" name="customerPhone" value={form.customerPhone} onChange={handleChange} className="mt-1 w-full p-2 border rounded" />
+            </div>
+            <div>
+              <label htmlFor="intendedUse" className="block text-sm font-medium">Intended Use<span className="text-[var(--error-color)]">*</span></label>
+              <select id="intendedUse" name="intendedUse" value={form.intendedUse} onChange={handleChange} className="mt-1 w-full p-2 border rounded">
+                <option value="">Select...</option>
+                <option value="USCIS">USCIS</option>
+                <option value="Court">Court</option>
+              </select>
+              {errors.intendedUse && <p className="text-[var(--error-color)] text-sm">{errors.intendedUse}</p>}
+            </div>
+            <div>
+              <label htmlFor="sourceLanguage" className="block text-sm font-medium">Source Language<span className="text-[var(--error-color)]">*</span></label>
+              <select id="sourceLanguage" name="sourceLanguage" value={form.sourceLanguage} onChange={handleChange} className="mt-1 w-full p-2 border rounded">
+                <option value="">Select...</option>
+                <option>English</option>
+                <option>Spanish</option>
+                <option>French</option>
+                <option>German</option>
+                <option>Japanese</option>
+              </select>
+              {errors.sourceLanguage && <p className="text-[var(--error-color)] text-sm">{errors.sourceLanguage}</p>}
+            </div>
+            <div>
+              <label htmlFor="targetLanguage" className="block text-sm font-medium">Target Language<span className="text-[var(--error-color)]">*</span></label>
+              <select id="targetLanguage" name="targetLanguage" value={form.targetLanguage} onChange={handleChange} className="mt-1 w-full p-2 border rounded">
+                <option value="">Select...</option>
+                <option>English</option>
+                <option>Spanish</option>
+                <option>French</option>
+                <option>German</option>
+                <option>Japanese</option>
+              </select>
+              {errors.targetLanguage && <p className="text-[var(--error-color)] text-sm">{errors.targetLanguage}</p>}
+            </div>
           </div>
-          <div>
-            <label htmlFor="customerEmail" className="block text-sm font-medium">Email<span className="text-[var(--error-color)]">*</span></label>
-            <input id="customerEmail" type="email" name="customerEmail" value={form.customerEmail} onChange={handleChange} className="mt-1 w-full p-2 border rounded" />
-            {errors.customerEmail && <p className="text-[var(--error-color)] text-sm">{errors.customerEmail}</p>}
-          </div>
-          <div>
-            <label htmlFor="customerPhone" className="block text-sm font-medium">Phone</label>
-            <input id="customerPhone" name="customerPhone" value={form.customerPhone} onChange={handleChange} className="mt-1 w-full p-2 border rounded" />
-          </div>
-          <div>
-            <label htmlFor="intendedUse" className="block text-sm font-medium">Intended Use<span className="text-[var(--error-color)]">*</span></label>
-            <select id="intendedUse" name="intendedUse" value={form.intendedUse} onChange={handleChange} className="mt-1 w-full p-2 border rounded">
-              <option value="">Select...</option>
-              <option value="USCIS">USCIS</option>
-              <option value="Court">Court</option>
-            </select>
-            {errors.intendedUse && <p className="text-[var(--error-color)] text-sm">{errors.intendedUse}</p>}
-          </div>
-          <div>
-            <label htmlFor="sourceLanguage" className="block text-sm font-medium">Source Language<span className="text-[var(--error-color)]">*</span></label>
-            <select id="sourceLanguage" name="sourceLanguage" value={form.sourceLanguage} onChange={handleChange} className="mt-1 w-full p-2 border rounded">
-              <option value="">Select...</option>
-              <option>English</option>
-              <option>Spanish</option>
-              <option>French</option>
-              <option>German</option>
-              <option>Japanese</option>
-            </select>
-            {errors.sourceLanguage && <p className="text-[var(--error-color)] text-sm">{errors.sourceLanguage}</p>}
-          </div>
-          <div>
-            <label htmlFor="targetLanguage" className="block text-sm font-medium">Target Language<span className="text-[var(--error-color)]">*</span></label>
-            <select id="targetLanguage" name="targetLanguage" value={form.targetLanguage} onChange={handleChange} className="mt-1 w-full p-2 border rounded">
-              <option value="">Select...</option>
-              <option>English</option>
-              <option>Spanish</option>
-              <option>French</option>
-              <option>German</option>
-              <option>Japanese</option>
-            </select>
-            {errors.targetLanguage && <p className="text-[var(--error-color)] text-sm">{errors.targetLanguage}</p>}
-          </div>
-        </div>
 
         <div
           className="border-2 border-dashed rounded p-4 text-center" onDragOver={e => e.preventDefault()} onDrop={handleDrop}
@@ -160,60 +230,15 @@ const QuoteRequestForm: React.FC = () => {
         </div>
 
         <button type="submit" className="w-full md:w-auto bg-[var(--accent-color)] hover:bg-[var(--accent-color-dark)] text-white py-2 px-6 rounded">
-          {loading ? 'Calculating...' : 'Get Quote'}
+          {loading ? 'Analyzing...' : 'Get Quote'}
         </button>
       </form>
-
-      {result && (
-        <div className="mt-8 space-y-4">
-          <h2 className="text-xl font-semibold">Quote ID: {result.quoteId}</h2>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm" role="table">
-              <thead>
-                <tr className="bg-gray-100 dark:bg-slate-700">
-                  <th className="p-2 text-left">File</th>
-                  <th className="p-2 text-left">Page</th>
-                  <th className="p-2 text-left">Wordcount</th>
-                  <th className="p-2 text-left">Complexity</th>
-                  <th className="p-2 text-left">Multiplier</th>
-                  <th className="p-2 text-left">PPWC</th>
-                  <th className="p-2 text-left">Billable Pages</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.files.map(f => (
-                  <React.Fragment key={f.fileId}>
-                    <tr className="bg-gray-50 dark:bg-slate-700 font-semibold">
-                      <td className="p-2" colSpan={7}>{f.filename}</td>
-                    </tr>
-                    {f.pages.map(p => (
-                      <tr key={p.pageNumber} className="border-b">
-                        <td className="p-2"></td>
-                        <td className="p-2">{p.pageNumber}</td>
-                        <td className="p-2">{p.wordCount}</td>
-                        <td className="p-2">{p.complexity}</td>
-                        <td className="p-2">{p.complexityMultiplier.toFixed(2)}</td>
-                        <td className="p-2">{p.ppwc.toFixed(2)}</td>
-                        <td className="p-2">{p.billablePages.toFixed(2)}</td>
-                      </tr>
-                    ))}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="p-4 border rounded grid grid-cols-1 md:grid-cols-2 gap-2">
-            <p><strong>Per-page rate:</strong> ${result.perPageRate.toFixed(2)}</p>
-            <p><strong>Total billable pages:</strong> {result.totalBillablePages.toFixed(2)}</p>
-            <p><strong>Certification:</strong> {result.certType} (${result.certPrice.toFixed(2)})</p>
-            <p className="text-lg font-semibold">Final Total: ${result.quoteTotal.toFixed(2)}</p>
-          </div>
-          <p className="text-sm text-gray-600 dark:text-gray-300">Billable pages are calculated from word count and complexity. Minimum charge of one page per quote.</p>
-        </div>
+      ) : (
+        <QuoteScreen result={result} onPay={handlePay} />
       )}
     </div>
   );
 };
 
 export default QuoteRequestForm;
+
