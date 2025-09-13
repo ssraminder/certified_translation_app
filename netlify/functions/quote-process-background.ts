@@ -7,8 +7,12 @@ interface EventLogger {
 
 const handler: Handler = async (event) => {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE, API_KEY } = process.env;
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE || !API_KEY) {
-    return { statusCode: 500, body: 'Missing environment variables' };
+  const missing = [] as string[];
+  if (!SUPABASE_URL) missing.push('SUPABASE_URL');
+  if (!SUPABASE_SERVICE_ROLE) missing.push('SUPABASE_SERVICE_ROLE');
+  if (!API_KEY) missing.push('API_KEY');
+  if (missing.length) {
+    return { statusCode: 500, body: `Missing environment variables: ${missing.join(', ')}` };
   }
 
   try {

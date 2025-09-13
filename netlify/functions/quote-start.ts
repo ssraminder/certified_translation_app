@@ -12,12 +12,14 @@ const handler: Handler = async (event) => {
   }
 
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE } = process.env;
-
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) {
+  const missing = [] as string[];
+  if (!SUPABASE_URL) missing.push('SUPABASE_URL');
+  if (!SUPABASE_SERVICE_ROLE) missing.push('SUPABASE_SERVICE_ROLE');
+  if (missing.length) {
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'Missing environment variables' }),
+      body: JSON.stringify({ error: `Missing environment variables: ${missing.join(', ')}` }),
     };
   }
 
