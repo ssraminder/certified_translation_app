@@ -102,3 +102,26 @@ CREATE TABLE AppSettings (
 -- INSERT INTO AppSettings (settingKey, settingValue) VALUES ('wordsPerPage','240');
 -- UPDATE AppSettings SET settingValue='70' WHERE settingKey='baseRate';
 -- SELECT settingValue FROM AppSettings WHERE settingKey='baseRate';
+
+-- Table: quote_jobs
+create table if not exists quote_jobs (
+  job_id uuid primary key default gen_random_uuid(),
+  quote_id text,
+  status text not null default 'queued', -- queued | running | succeeded | failed
+  error text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+-- Table: quote_job_events
+create table if not exists quote_job_events (
+  id bigserial primary key,
+  job_id uuid references quote_jobs(job_id) on delete cascade,
+  ts timestamptz default now(),
+  step text,
+  message text,
+  progress int
+);
+
+create index if not exists quote_job_events_jobid_idx
+  on quote_job_events(job_id, ts);

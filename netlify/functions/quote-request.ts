@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Handler } from '@netlify/functions';
+import { initJob, logEvent, endJob } from './_progress';
 
 const handler: Handler = async (event) => {
   const headers = {
@@ -23,6 +24,8 @@ const handler: Handler = async (event) => {
     };
   }
 
+  let jobId: string | undefined;
+
   try {
     const body = JSON.parse(event.body || '{}');
     const {
@@ -42,6 +45,9 @@ const handler: Handler = async (event) => {
 
     const supabase = createClient(SUPABASE_URL, supabaseKey);
 
+    jobId = await initJob();
+    await logEvent(jobId, 'upload', 'Received files…', 5);
+
     const buffer = Buffer.from(fileBase64, 'base64');
     const path = `orders/${Date.now()}-${fileName}`;
     const { error: uploadError } = await supabase.storage
@@ -50,25 +56,19 @@ const handler: Handler = async (event) => {
 
     if (uploadError) throw uploadError;
 
-    const { data: inserted, error: insertError } = await supabase
-      .from('orders')
-      .insert({
-        name,
-        email,
-        phone,
-        data: { sourceLang, targetLang, filePath: path },
-      })
-      .select('id')
-      .single();
-
-    if (insertError) throw insertError;
+    await logEvent(jobId, 'ocr', 'Running OCR on uploaded files…', 15);
 
     // Google Vision OCR
+    const featureType =
+      fileType === 'application/pdf' || fileType === 'image/tiff'
+        ? 'DOCUMENT_TEXT_DETECTION'
+        : 'TEXT_DETECTION';
+
     const visionBody = {
       requests: [
         {
           image: { content: fileBase64 },
-          features: [{ type: 'TEXT_DETECTION' }],
+          features: [{ type: featureType }],
         },
       ],
     };
@@ -90,17 +90,23 @@ const handler: Handler = async (event) => {
     const visionData = await visionResp.json();
     const ocrText = visionData.responses?.[0]?.fullTextAnnotation?.text || '';
 
+    await logEvent(jobId, 'gemini', 'Analyzing language & complexity…', 50);
+
     // Gemini analysis
     const geminiBody = {
       contents: [
         {
           parts: [
             {
-              text: `Analyze the following text and summarize any key information:\n${ocrText}`,
+              text:
+                'Given the OCR text below, identify the language and classify overall complexity as Easy, Medium, or Hard. ' +
+                'Respond with JSON: {"language":"<language>","complexity":"<Easy|Medium|Hard>"}.\n\n' +
+                ocrText,
             },
           ],
         },
       ],
+      generationConfig: { responseMimeType: 'application/json' },
     };
 
     const geminiResp = await fetch(
@@ -118,19 +124,48 @@ const handler: Handler = async (event) => {
     }
 
     const geminiData = await geminiResp.json();
-    const analysis =
-      geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    let language = '';
+    let complexity = '';
+    try {
+      const parsed = JSON.parse(
+        geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '{}'
+      );
+      language = parsed.language || '';
+      complexity = parsed.complexity || '';
+    } catch {
+      // fall back to empty strings if parsing fails
+    }
+
+    await logEvent(jobId, 'db', 'Saving OCR & analysis results…', 75);
+
+    const { data: inserted, error: insertError } = await supabase
+      .from('orders')
+      .insert({
+        name,
+        email,
+        phone,
+        data: { sourceLang, targetLang, filePath: path, ocrText, language, complexity },
+      })
+      .select('id')
+      .single();
+
+    if (insertError) throw insertError;
+
+    await logEvent(jobId, 'pricing', 'Calculating per-page rate, cert, and totals…', 90);
+
+    await endJob(jobId, 'succeeded');
 
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ id: inserted.id, ocrText, analysis }),
+      body: JSON.stringify({ jobId, id: inserted.id, ocrText, language, complexity }),
     };
   } catch (error: any) {
+    if (jobId) await endJob(jobId, 'failed', error.message || String(error));
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: error.message || 'Unknown error' }),
+      body: JSON.stringify({ jobId, error: error.message || 'Unknown error' }),
     };
   }
 };
