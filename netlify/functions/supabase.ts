@@ -6,14 +6,14 @@ import type { Handler, HandlerEvent, HandlerContext } from "@netlify/functions";
  * It fetches the top 1 record from a 'notes' table.
  */
 const handler: Handler = async (event: HandlerEvent, context: HandlerContext) => {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY } = process.env;
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE, SUPABASE_ANON_KEY } = process.env;
 
   const headers = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*', // Allow requests from any origin
   };
 
-  const supabaseKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+  const supabaseKey = SUPABASE_SERVICE_ROLE || SUPABASE_ANON_KEY;
   if (!SUPABASE_URL || !supabaseKey) {
     return {
       statusCode: 500,
