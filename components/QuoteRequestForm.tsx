@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import AnalysisOverlay from './AnalysisOverlay';
-import { calculateQuote, FileAnalysis, QuoteTotals, appSettings } from '../helpers/quoteCalculator';
+import { calculateQuote, FileAnalysis, QuoteTotals, appSettings, languages } from '../helpers/quoteCalculator';
 
 interface FormState {
   customerName: string;
@@ -37,11 +37,14 @@ const QuoteRequestForm: React.FC = () => {
 
   const validate = () => {
     const newErrors: Record<string, string> = {};
+    const validLangs = new Set(languages.map(l => l.languageName));
     if (!form.customerName.trim()) newErrors.customerName = 'Name is required.';
     if (!form.customerEmail.trim()) newErrors.customerEmail = 'Email is required.';
     else if (!/^\S+@\S+\.\S+$/.test(form.customerEmail)) newErrors.customerEmail = 'Invalid email address.';
     if (!form.sourceLanguage) newErrors.sourceLanguage = 'Source language is required.';
+    else if (!validLangs.has(form.sourceLanguage)) newErrors.sourceLanguage = 'Invalid source language.';
     if (!form.targetLanguage) newErrors.targetLanguage = 'Target language is required.';
+    else if (!validLangs.has(form.targetLanguage)) newErrors.targetLanguage = 'Invalid target language.';
     if (!form.intendedUse) newErrors.intendedUse = 'Intended use is required.';
     if (form.uploadedFiles.length === 0) newErrors.uploadedFiles = 'At least one file is required.';
     setErrors(newErrors);
@@ -181,11 +184,9 @@ const QuoteRequestForm: React.FC = () => {
             <label htmlFor="sourceLanguage" className="block text-sm font-medium">Source Language<span className="text-[var(--error-color)]">*</span></label>
             <select id="sourceLanguage" name="sourceLanguage" value={form.sourceLanguage} onChange={handleChange} className="mt-1 w-full p-2 border rounded">
               <option value="">Select...</option>
-              <option>English</option>
-              <option>Spanish</option>
-              <option>French</option>
-              <option>German</option>
-              <option>Japanese</option>
+              {languages.map(lang => (
+                <option key={lang.languageName} value={lang.languageName}>{lang.languageName}</option>
+              ))}
             </select>
             {errors.sourceLanguage && <p className="text-[var(--error-color)] text-sm">{errors.sourceLanguage}</p>}
           </div>
@@ -193,11 +194,9 @@ const QuoteRequestForm: React.FC = () => {
             <label htmlFor="targetLanguage" className="block text-sm font-medium">Target Language<span className="text-[var(--error-color)]">*</span></label>
             <select id="targetLanguage" name="targetLanguage" value={form.targetLanguage} onChange={handleChange} className="mt-1 w-full p-2 border rounded">
               <option value="">Select...</option>
-              <option>English</option>
-              <option>Spanish</option>
-              <option>French</option>
-              <option>German</option>
-              <option>Japanese</option>
+              {languages.map(lang => (
+                <option key={lang.languageName} value={lang.languageName}>{lang.languageName}</option>
+              ))}
             </select>
             {errors.targetLanguage && <p className="text-[var(--error-color)] text-sm">{errors.targetLanguage}</p>}
           </div>
