@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { analyzeFiles, calculateQuote, FileAnalysis, QuoteTotals } from '../helpers/quoteCalculator';
+import AnalysisOverlay from './AnalysisOverlay';
+import { calculateQuote, FileAnalysis, QuoteTotals, appSettings } from '../helpers/quoteCalculator';
 
 interface FormState {
   customerName: string;
@@ -74,15 +75,73 @@ const QuoteRequestForm: React.FC = () => {
     setForm(prev => ({ ...prev, uploadedFiles: prev.uploadedFiles.filter((_, i) => i !== index) }));
   };
 
+  const complexityMap: Record<'Easy' | 'Medium' | 'Hard', number> = {
+    Easy: 1.0,
+    Medium: 1.1,
+    Hard: 1.2,
+  };
+
+  const fileToBase64 = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setResult(null);
     if (!validate()) return;
     setLoading(true);
     try {
-      const analyses = await analyzeFiles(form.uploadedFiles);
+      const analyses: FileAnalysis[] = [];
+      for (const file of form.uploadedFiles) {
+        const base64 = await fileToBase64(file);
+        const response = await fetch('/.netlify/functions/quote-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: form.customerName,
+            email: form.customerEmail,
+            phone: form.customerPhone,
+            sourceLang: form.sourceLanguage,
+            targetLang: form.targetLanguage,
+            fileName: file.name,
+            fileType: file.type,
+            fileBase64: base64,
+          }),
+        });
+
+        const data = await response.json();
+        const wordCount = data.ocrText ? data.ocrText.trim().split(/\s+/).length : 0;
+        const complexity: 'Easy' | 'Medium' | 'Hard' = 'Medium'; // assumption
+        const complexityMultiplier = complexityMap[complexity];
+        const ppwc = wordCount * complexityMultiplier;
+        const billablePages = Math.ceil((ppwc / appSettings.wordsPerPage) * 10) / 10;
+        analyses.push({
+          fileId: data.id?.toString() || file.name,
+          filename: file.name,
+          pageCount: 1,
+          pages: [
+            {
+              pageNumber: 1,
+              wordCount,
+              complexity,
+              complexityMultiplier,
+              ppwc,
+              billablePages,
+            },
+          ],
+        });
+      }
+
       const quoteTotals = calculateQuote(analyses, form);
-      const id = `CS${(quoteCounter + 1).toString().padStart(5,'0')}`;
+      const id = `CS${(quoteCounter + 1).toString().padStart(5, '0')}`;
       setQuoteCounter(prev => prev + 1);
       setResult({ quoteId: id, files: analyses, ...quoteTotals });
     } finally {
@@ -92,6 +151,7 @@ const QuoteRequestForm: React.FC = () => {
 
   return (
     <div className="max-w-5xl mx-auto p-4">
+      <AnalysisOverlay visible={loading} />
       <form onSubmit={handleSubmit} className="space-y-6" aria-label="Quote request form">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -160,7 +220,7 @@ const QuoteRequestForm: React.FC = () => {
         </div>
 
         <button type="submit" className="w-full md:w-auto bg-[var(--accent-color)] hover:bg-[var(--accent-color-dark)] text-white py-2 px-6 rounded">
-          {loading ? 'Calculating...' : 'Get Quote'}
+          {loading ? 'Analyzing...' : 'Get Quote'}
         </button>
       </form>
 
