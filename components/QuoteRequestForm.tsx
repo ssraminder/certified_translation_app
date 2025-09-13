@@ -32,7 +32,6 @@ const QuoteRequestForm: React.FC = () => {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
-  const [quoteCounter, setQuoteCounter] = useState(() => Math.floor(Math.random() * 90000));
   const fileInput = useRef<HTMLInputElement | null>(null);
 
   const validate = () => {
@@ -141,9 +140,21 @@ const QuoteRequestForm: React.FC = () => {
       }
 
       const quoteTotals = calculateQuote(analyses, form);
-      const id = `CS${(quoteCounter + 1).toString().padStart(5, '0')}`;
-      setQuoteCounter(prev => prev + 1);
-      setResult({ quoteId: id, files: analyses, ...quoteTotals });
+      const resp = await fetch('/.netlify/functions/create-quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerName: form.customerName,
+          customerEmail: form.customerEmail,
+          customerPhone: form.customerPhone,
+          sourceLanguage: form.sourceLanguage,
+          targetLanguage: form.targetLanguage,
+          intendedUse: form.intendedUse,
+          ...quoteTotals,
+        }),
+      });
+      const { quoteId } = await resp.json();
+      setResult({ quoteId, files: analyses, ...quoteTotals });
     } finally {
       setLoading(false);
     }
