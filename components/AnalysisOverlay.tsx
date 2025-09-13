@@ -3,19 +3,34 @@ import React, { useEffect, useState, useRef } from 'react';
 type JobEvent = { ts: string; step: string; message: string; progress?: number };
 type Job = { status: string; error?: string };
 
-export default function AnalysisOverlay({ jobId }: { jobId?: string }) {
+interface Props {
+  jobId: string;
+  onResolved: (r: { status: 'succeeded' | 'failed'; result?: any; error?: string; events: JobEvent[] }) => void;
+}
+
+export default function AnalysisOverlay({ jobId, onResolved }: Props) {
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [job, setJob] = useState<Job | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const resolved = useRef(false);
 
   useEffect(() => {
-    if (!jobId) return;
     const timer = setInterval(async () => {
       try {
         const res = await fetch(`/.netlify/functions/quote-status?jobId=${jobId}`);
-        const { job, events } = await res.json();
+        const { job, events, result } = await res.json();
         setJob(job);
         setEvents(events || []);
+        if (!resolved.current) {
+          if (job?.status === 'succeeded') {
+            resolved.current = true;
+            onResolved({ status: 'succeeded', result, events: events || [] });
+          }
+          if (job?.status === 'failed') {
+            resolved.current = true;
+            onResolved({ status: 'failed', error: job.error, events: events || [] });
+          }
+        }
       } catch {
         setEvents(prev => [
           ...prev,
@@ -28,7 +43,7 @@ export default function AnalysisOverlay({ jobId }: { jobId?: string }) {
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [jobId]);
+  }, [jobId, onResolved]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });

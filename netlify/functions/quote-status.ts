@@ -23,6 +23,6 @@ export async function handler(event: any) {
 
   return {
     statusCode: 200,
-    body: JSON.stringify({ job, events })
+    body: JSON.stringify({ job, events, result: job?.result })
   };
 }

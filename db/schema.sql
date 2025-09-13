@@ -109,6 +109,7 @@ create table if not exists quote_jobs (
   quote_id text,
   status text not null default 'queued', -- queued | running | succeeded | failed
   error text,
+  result jsonb,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
