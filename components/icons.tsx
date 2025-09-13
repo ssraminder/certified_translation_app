@@ -98,3 +98,29 @@ export const SupabaseIcon: React.FC<IconProps> = ({ className }) => (
         <path d="M24.7134 6.6665C24.7134 11.1065 20.42 14.6665 15.75 14.6665C11.08 14.6665 6.78662 11.1065 6.78662 6.6665C6.78662 2.2265 11.08 -1.3335 15.75 -1.3335C20.42 -1.3335 24.7134 2.2265 24.7134 6.6665Z" transform="translate(0 2)" fill="currentColor"></path>
     </svg>
 );
+
+export const MenuIcon: React.FC<IconProps> = ({ className }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    fill="none"
+    viewBox="0 0 24 24"
+    strokeWidth={1.5}
+    stroke="currentColor"
+    className={className}
+  >
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 5.25h16.5M3.75 12h16.5m-16.5 6.75h16.5" />
+  </svg>
+);
+
+export const XIcon: React.FC<IconProps> = ({ className }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    fill="none"
+    viewBox="0 0 24 24"
+    strokeWidth={1.5}
+    stroke="currentColor"
+    className={className}
+  >
+    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+  </svg>
+);
