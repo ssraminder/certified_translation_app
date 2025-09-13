@@ -37,7 +37,7 @@ const App: React.FC = () => {
     <div className="min-h-screen flex flex-col">
       <Header />
       <main className="flex-1">
-        {screen === 'form' && <QuoteRequestForm onJobStart={startJob} />}
+        {screen === 'form' && <QuoteRequestForm onJobStart={startJob} onError={handleError} />}
         {screen === 'waiting' && (
           <QuoteJobStatus jobId={jobId} onComplete={handleComplete} onError={handleError} />
         )}

@@ -22,9 +22,10 @@ const initialForm: FormState = {
 
 interface QuoteRequestFormProps {
   onJobStart: (jobId: string) => void;
+  onError: (msg: string) => void;
 }
 
-const QuoteRequestForm: React.FC<QuoteRequestFormProps> = ({ onJobStart }) => {
+const QuoteRequestForm: React.FC<QuoteRequestFormProps> = ({ onJobStart, onError }) => {
   const [form, setForm] = useState<FormState>(initialForm);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const fileInput = useRef<HTMLInputElement | null>(null);
@@ -86,26 +87,34 @@ const QuoteRequestForm: React.FC<QuoteRequestFormProps> = ({ onJobStart }) => {
     if (!validate()) return;
     const file = form.uploadedFiles[0];
     const base64 = await fileToBase64(file);
-    const response = await fetch('/.netlify/functions/quote-start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: form.customerName,
-        email: form.customerEmail,
-        phone: form.customerPhone,
-        sourceLang: form.sourceLanguage,
-        targetLang: form.targetLanguage,
-        intendedUse: form.intendedUse,
-        fileName: file.name,
-        fileType: file.type,
-        fileBase64: base64,
-      }),
-    });
-    const data = await response.json();
-    if (data.jobId) {
-      onJobStart(data.jobId);
-    } else {
-      alert('Failed to start job');
+    try {
+      const response = await fetch('/.netlify/functions/quote-start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: form.customerName,
+          email: form.customerEmail,
+          phone: form.customerPhone,
+          sourceLang: form.sourceLanguage,
+          targetLang: form.targetLanguage,
+          intendedUse: form.intendedUse,
+          fileName: file.name,
+          fileType: file.type,
+          fileBase64: base64,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        onError(data.error || 'Failed to start job');
+        return;
+      }
+      if (data.jobId) {
+        onJobStart(data.jobId);
+      } else {
+        onError('Failed to start job');
+      }
+    } catch (err: any) {
+      onError(err.message || 'Failed to start job');
     }
   };
 
