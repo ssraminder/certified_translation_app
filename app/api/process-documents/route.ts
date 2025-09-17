@@ -24,17 +24,26 @@ type IncomingFileB = { objectPath: string; file_name: string }; // server-side s
 
 // ---- PDF text extraction via pdfjs-dist (no OCR) ----
 async function extractWordCountsFromPdf(buffer: Buffer) {
-  // Avoid worker/FontFace issues in serverless
-  // @ts-ignore
-  pdfjsLib.GlobalWorkerOptions = pdfjsLib.GlobalWorkerOptions || {};
-  // @ts-ignore
-  pdfjsLib.GlobalWorkerOptions.workerSrc = undefined;
+  // In pdfjs-dist v5+, GlobalWorkerOptions is readonly. Do NOT reassign it.
+  // It's fine on Node to leave workerSrc unset, but setting it is harmless if present.
+  try {
+    // @ts-ignore - present in pdfjs-dist
+    if (pdfjsLib.GlobalWorkerOptions) {
+      // @ts-ignore
+      pdfjsLib.GlobalWorkerOptions.workerSrc = undefined;
+    }
+  } catch {
+    // ignore – not fatal
+  }
 
   const loadingTask = pdfjsLib.getDocument({
     data: buffer,
     useSystemFonts: true,
     isEvalSupported: false,
     disableFontFace: true,
+    // Avoid worker fetch paths in serverless
+    // @ts-ignore (option is accepted by getDocument)
+    useWorkerFetch: false,
   });
 
   const pdf = await loadingTask.promise;
@@ -185,6 +194,8 @@ export async function POST(req: NextRequest) {
               useSystemFonts: true,
               isEvalSupported: false,
               disableFontFace: true,
+              // @ts-ignore
+              useWorkerFetch: false,
             });
             const pdf = await loading.promise;
             const maxPages = Math.min(5, pdf.numPages);
