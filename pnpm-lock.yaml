@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@google-cloud/vision':
-        specifier: latest
+        specifier: 5.3.3
         version: 5.3.3
       '@google/generative-ai':
         specifier: latest
