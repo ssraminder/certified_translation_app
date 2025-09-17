@@ -1,410 +1,199 @@
-import { type NextRequest, NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
-import {
-  ServicePrincipalCredentials,
-  PDFServices,
-  MimeType,
-  ExtractPDFJob,
-  ExtractPDFParams,
-  ExtractElementType,
-} from "@adobe/pdfservices-node-sdk"
-const PDFServicesSdk = require("@adobe/pdfservices-node-sdk")
+// app/api/process-document/route.ts
+export const runtime = "nodejs";          // IMPORTANT: Adobe SDK needs Node
+export const dynamic = "force-dynamic";   // avoid caching on Vercel
 
-interface ProcessDocumentsRequest {
-  quote_id: string
-  files: Array<{ fileName: string; signedUrl: string }>
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+import { Readable } from "stream";
+import JSZip from "jszip";
+import PDFServicesSdk from "@adobe/pdfservices-node-sdk";
+
+const SUPABASE_URL = process.env.SUPABASE_URL!;
+const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const BUCKET = process.env.ORDERS_BUCKET || "orders";
+
+const ADOBE_ID = process.env.ADOBE_PDF_CLIENT_ID!;
+const ADOBE_SECRET = process.env.ADOBE_PDF_CLIENT_SECRET!;
+
+/**
+ * Helper: list all objects under orders/{quote_id}/ if the caller didn't specify files explicitly
+ */
+async function listObjectsForQuote(sb: ReturnType<typeof createClient>, quoteId: string) {
+  const prefix = `orders/${quoteId}/`;
+  const { data, error } = await sb.storage.from(BUCKET).list(prefix, { limit: 1000 });
+  if (error) throw new Error(`List failed: ${error.message}`);
+  return (data || [])
+    .filter((f) => f?.name && !f.name.endsWith("/"))
+    .map((f) => ({
+      objectPath: `${prefix}${f.name}`,
+      file_name: f.name,
+      mimeType: guessMime(f.name),
+    }));
 }
 
-interface ProcessResult {
-  file_name: string
-  page_count: number
-  total_word_count: number
-  words_per_page: number[]
+function guessMime(name: string) {
+  const n = name.toLowerCase();
+  if (n.endsWith(".pdf")) return "application/pdf";
+  if (n.endsWith(".png")) return "image/png";
+  if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return "image/jpeg";
+  if (n.endsWith(".tif") || n.endsWith(".tiff")) return "image/tiff";
+  return "application/octet-stream";
 }
 
-async function processWithAdobePDF(
-  fileBuffer: ArrayBuffer,
-  fileName: string,
-): Promise<{
-  totalWordCount: number
-  pageCount: number
-  wordsPerPage: number[]
-  fullText: string
-}> {
-  console.log(`[v0] Processing PDF ${fileName} with Adobe PDF Services`)
-
-  const clientId = process.env.ADOBE_CLIENT_ID
-  const clientSecret = process.env.ADOBE_CLIENT_SECRET
-
-  if (!clientId || !clientSecret) {
-    throw new Error("Missing Adobe PDF Services credentials")
+/**
+ * Parse Adobe Extract ZIP buffer to compute page and word counts.
+ * We look for structuredData.json and count words by page from the elements.
+ */
+async function analyzeExtractZip(zipBuffer: Buffer) {
+  const zip = await JSZip.loadAsync(zipBuffer);
+  const sd = zip.file("structuredData.json");
+  if (!sd) {
+    return { page_count: 0, total_word_count: 0, words_per_page: [] as number[] };
   }
+  const json = JSON.parse(await sd.async("string"));
 
+  // JSON shape varies; we try to be resilient:
+  // Collect words keyed by pageNumber if present; otherwise lump into page 1.
+  const wordsPerPage: Record<number, number> = {};
+  const addWord = (page: number) => {
+    wordsPerPage[page] = (wordsPerPage[page] || 0) + 1;
+  };
+
+  // Try common locations for text elements
+  const traverse = (node: any) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(traverse);
+      return;
+    }
+    // Adobe often uses "Text" or "text" spans with path->pageNumber
+    const pageNum =
+      node.pageNumber ??
+      node.PageNumber ??
+      node.page_index ??
+      node.pageIndex ??
+      1;
+
+    if (node.Text || node.text) {
+      // Split by whitespace to approximate word count
+      const text = String(node.Text ?? node.text);
+      const words = text.trim().split(/\s+/).filter(Boolean);
+      for (let i = 0; i < words.length; i++) addWord(pageNum);
+    }
+
+    for (const k of Object.keys(node)) traverse(node[k]);
+  };
+
+  traverse(json);
+
+  const pages = Object.keys(wordsPerPage).map((k) => Number(k));
+  const page_count = pages.length ? Math.max(...pages) : 0;
+  const words_per_page: number[] = [];
+  for (let i = 1; i <= page_count; i++) {
+    words_per_page.push(wordsPerPage[i] || 0);
+  }
+  const total_word_count = words_per_page.reduce((a, b) => a + b, 0);
+  return { page_count, total_word_count, words_per_page };
+}
+
+export async function POST(req: NextRequest) {
   try {
-    // Create credentials using new API
-    const credentials = new ServicePrincipalCredentials({
-      clientId: clientId,
-      clientSecret: clientSecret,
-    })
+    const body = await req.json();
+    const quote_id: string = body?.quote_id;
+    let files: Array<{ objectPath: string; file_name: string; mimeType?: string }> = body?.files;
 
-    // Create PDF Services instance
-    const pdfServices = new PDFServices({ credentials })
+    if (!quote_id) {
+      return NextResponse.json({ error: "quote_id is required" }, { status: 400 });
+    }
 
-    const buffer = Buffer.from(fileBuffer)
-    const inputAsset = await pdfServices.upload({
-      readStream: buffer,
-      mimeType: MimeType.PDF,
-    })
+    const sb = createClient(SUPABASE_URL, SERVICE_ROLE);
 
-    // Create parameters for extraction
-    const params = new ExtractPDFParams({
-      elementsToExtract: [ExtractElementType.TEXT],
-    })
+    // If files not provided, list everything under orders/{quote_id}/
+    if (!files || !files.length) {
+      files = await listObjectsForQuote(sb, quote_id);
+    }
 
-    // Create the job
-    const job = new ExtractPDFJob({ inputAsset, params })
+    console.log("[SERVER] [v0] Document processing API called with quote_id:", quote_id);
+    console.log("[SERVER] [v0] Number of files to process:", files.length);
 
-    // Submit the job and get the result
-    const pollingURL = await pdfServices.submit({ job })
-    const pdfServicesResponse = await pdfServices.getJobResult({
-      pollingURL,
-      resultType: ExtractPDFJob.ResultType,
-    })
+    const creds = PDFServicesSdk.Credentials
+      .servicePrincipalCredentialsBuilder()
+      .withClientId(ADOBE_ID)
+      .withClientSecret(ADOBE_SECRET)
+      .build();
+    const ctx = PDFServicesSdk.ExecutionContext.create(creds);
 
-    // Get the result asset
-    const resultAsset = pdfServicesResponse.result.resource
-    const streamAsset = await pdfServices.getContent({ asset: resultAsset })
+    const results: Array<{
+      file_name: string;
+      page_count: number;
+      total_word_count: number;
+      words_per_page: number[];
+    }> = [];
 
-    let resultBuffer: Buffer
+    for (const f of files) {
+      const { objectPath, file_name } = f;
+      console.log("[SERVER] [v0] Processing file:", file_name);
 
-    if (streamAsset.readStream && typeof streamAsset.readStream.on === "function") {
-      // It's a Node.js stream
-      const chunks: Buffer[] = []
-      for await (const chunk of streamAsset.readStream) {
-        chunks.push(chunk)
+      // Create a short-lived signed URL to read the file bytes from Supabase
+      const { data: signed, error: signErr } = await sb.storage
+        .from(BUCKET)
+        .createSignedUrl(objectPath, 60);
+      if (signErr || !signed?.signedUrl) {
+        throw new Error(`Signed read URL failed for ${file_name}: ${signErr?.message || "Unknown"}`);
       }
-      resultBuffer = Buffer.concat(chunks)
-    } else if (streamAsset.readStream instanceof Buffer) {
-      // It's already a Buffer
-      resultBuffer = streamAsset.readStream
-    } else if (streamAsset.readStream && typeof streamAsset.readStream.arrayBuffer === "function") {
-      // It's a Blob or similar
-      const arrayBuffer = await streamAsset.readStream.arrayBuffer()
-      resultBuffer = Buffer.from(arrayBuffer)
-    } else {
-      // Fallback: try to convert directly
-      resultBuffer = Buffer.from(streamAsset.readStream)
-    }
 
-    const extractedData = JSON.parse(resultBuffer.toString())
+      // Fetch bytes → Buffer → Node Readable stream
+      const r = await fetch(signed.signedUrl);
+      if (!r.ok) throw new Error(`Download failed for ${file_name}: ${await r.text()}`);
+      const ab = await r.arrayBuffer();
+      const buf = Buffer.from(ab);
+      const nodeStream = Readable.from(buf);
 
-    // Parse results
-    const elements = extractedData.elements || []
-    let fullText = ""
-    let totalWordCount = 0
-    const wordsPerPage: number[] = []
-    const pageWordCounts: { [key: number]: number } = {}
+      console.log("[SERVER] Processing PDF", file_name, "with Adobe PDF Services");
 
-    elements.forEach((element: any) => {
-      if (element.Text) {
-        fullText += element.Text + " "
-        const words = element.Text.trim()
-          .split(/\s+/)
-          .filter((w: string) => w.length > 0)
+      // Build Adobe FileRef from Node stream
+      const fileRef = PDFServicesSdk.FileRef.createFromStream(nodeStream, "application/pdf");
 
-        const pageNum = element.Page || 1
-        if (!pageWordCounts[pageNum]) {
-          pageWordCounts[pageNum] = 0
-        }
-        pageWordCounts[pageNum] += words.length
-        totalWordCount += words.length
-      }
-    })
+      // Run Extract operation (you can swap in OCR/other operations if you prefer)
+      const extract = PDFServicesSdk.ExtractPDF.Operation.createNew();
+      extract.setInput(fileRef);
+      // You can set options here if needed:
+      // const options = new PDFServicesSdk.ExtractPDF.options.ExtractPDFOptions.Builder().build();
+      // extract.setOptions(options);
 
-    // Convert page word counts to array
-    const maxPage = Math.max(...Object.keys(pageWordCounts).map(Number), 1)
-    for (let i = 1; i <= maxPage; i++) {
-      wordsPerPage.push(pageWordCounts[i] || 0)
-    }
+      let page_count = 0;
+      let total_word_count = 0;
+      let words_per_page: number[] = [];
 
-    const pageCount = wordsPerPage.length || 1
-
-    console.log(`[v0] Adobe PDF processed ${fileName}: ${totalWordCount} words across ${pageCount} pages`)
-
-    return {
-      totalWordCount,
-      pageCount,
-      wordsPerPage,
-      fullText: fullText.trim(),
-    }
-  } catch (error) {
-    console.error(`[v0] Adobe PDF processing failed for ${fileName}:`, error)
-    throw error
-  }
-}
-
-async function processWithCloudVision(
-  fileBuffer: ArrayBuffer,
-  fileName: string,
-  mimeType: string,
-): Promise<{
-  totalWordCount: number
-  pageCount: number
-  wordsPerPage: number[]
-  fullText: string
-}> {
-  console.log(`[v0] Processing image ${fileName} with Google Cloud Vision`)
-
-  const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID
-  const credentialsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
-
-  if (!projectId || !credentialsJson) {
-    throw new Error("Missing Google Cloud Vision credentials")
-  }
-
-  try {
-    // Parse service account credentials
-    const credentials = JSON.parse(credentialsJson)
-
-    // Create JWT token for authentication
-    const { SignJWT } = await import("jose")
-    const { importPKCS8 } = await import("jose")
-    const privateKey = await importPKCS8(credentials.private_key, "RS256")
-
-    const now = Math.floor(Date.now() / 1000)
-    const token = await new SignJWT({
-      iss: credentials.client_email,
-      sub: credentials.client_email,
-      aud: "https://oauth2.googleapis.com/token",
-      iat: now,
-      exp: now + 3600,
-      scope: "https://www.googleapis.com/auth/cloud-platform",
-    })
-      .setProtectedHeader({ alg: "RS256" })
-      .sign(privateKey)
-
-    // Get access token
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        assertion: token,
-      }),
-    })
-
-    if (!tokenResponse.ok) {
-      throw new Error(`Vision token request failed: ${tokenResponse.statusText}`)
-    }
-
-    const tokenData = await tokenResponse.json()
-    const accessToken = tokenData.access_token
-
-    // Process with Cloud Vision OCR
-    const base64Content = Buffer.from(fileBuffer).toString("base64")
-
-    const visionResponse = await fetch(`https://vision.googleapis.com/v1/projects/${projectId}/images:annotate`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        requests: [
-          {
-            image: {
-              content: base64Content,
-            },
-            features: [
-              {
-                type: "TEXT_DETECTION",
-                maxResults: 1,
-              },
-            ],
-          },
-        ],
-      }),
-    })
-
-    if (!visionResponse.ok) {
-      throw new Error(`Vision API failed: ${visionResponse.statusText}`)
-    }
-
-    const visionData = await visionResponse.json()
-    const textAnnotations = visionData.responses?.[0]?.textAnnotations || []
-
-    let fullText = ""
-    if (textAnnotations.length > 0) {
-      fullText = textAnnotations[0].description || ""
-    }
-
-    const words = fullText
-      .trim()
-      .split(/\s+/)
-      .filter((w) => w.length > 0)
-    const totalWordCount = words.length
-    const pageCount = 1 // Images are single page
-    const wordsPerPage = [totalWordCount]
-
-    console.log(`[v0] Cloud Vision processed ${fileName}: ${totalWordCount} words`)
-
-    return {
-      totalWordCount,
-      pageCount,
-      wordsPerPage,
-      fullText,
-    }
-  } catch (error) {
-    console.error(`[v0] Cloud Vision processing failed for ${fileName}:`, error)
-    throw error
-  }
-}
-
-export async function POST(request: NextRequest) {
-  try {
-    const body: ProcessDocumentsRequest = await request.json()
-    const { quote_id, files } = body
-
-    if (!quote_id || !files || !Array.isArray(files)) {
-      return NextResponse.json({
-        status: "error",
-        message: "Invalid request body. Expected quote_id and files array.",
-      })
-    }
-
-    console.log("[v0] Document processing API called with quote_id:", quote_id)
-    console.log("[v0] Number of files to process:", files.length)
-
-    const supabase = await createClient()
-    const results: ProcessResult[] = []
-
-    // Process each file
-    for (const file of files) {
       try {
-        console.log(`[v0] Processing file: ${file.fileName}`)
-
-        const fileExtension = file.fileName.toLowerCase().split(".").pop()
-        const isImageFile = ["jpg", "jpeg", "png", "gif", "bmp", "webp"].includes(fileExtension || "")
-        const isPdfFile = fileExtension === "pdf"
-
-        if (!isImageFile && !isPdfFile) {
-          console.log(`[v0] Skipping processing for ${file.fileName} - unsupported file type (${fileExtension})`)
-
-          await supabase.from("quote_files").upsert(
-            {
-              quote_id,
-              file_name: file.fileName,
-              ocr_status: "skipped",
-              ocr_message: "Processing skipped - file type not supported",
-              words_per_page: [],
-              total_word_count: 0,
-              detected_language: "unknown",
-            },
-            {
-              onConflict: "quote_id,file_name",
-            },
-          )
-
-          results.push({
-            file_name: file.fileName,
-            page_count: 0,
-            total_word_count: 0,
-            words_per_page: [],
-          })
-          continue
-        }
-
-        // Fetch file from signed URL
-        const response = await fetch(file.signedUrl)
-        if (!response.ok) {
-          console.error(`[v0] Failed to fetch file ${file.fileName}:`, response.status, response.statusText)
-          throw new Error(`Failed to fetch file: ${response.statusText}`)
-        }
-
-        const buffer = await response.arrayBuffer()
-
-        let documentResult
-
-        if (isPdfFile) {
-          documentResult = await processWithAdobePDF(buffer, file.fileName)
-        } else {
-          const mimeType = `image/${fileExtension === "jpg" ? "jpeg" : fileExtension}`
-          documentResult = await processWithCloudVision(buffer, file.fileName, mimeType)
-        }
-
-        const totalWordCount = documentResult.totalWordCount
-        const pageCount = documentResult.pageCount
-        const wordsPerPage = documentResult.wordsPerPage
-
-        const { error: dbError } = await supabase.from("quote_files").upsert(
-          {
-            quote_id,
-            file_name: file.fileName,
-            ocr_status: "completed",
-            ocr_message: null,
-            words_per_page: wordsPerPage,
-            total_word_count: totalWordCount,
-            detected_language: "unknown", // Could be enhanced with language detection
-          },
-          {
-            onConflict: "quote_id,file_name",
-          },
-        )
-
-        if (dbError) {
-          console.error(`[v0] Database error for ${file.fileName}:`, dbError)
-          throw new Error(`Database error: ${dbError.message}`)
-        }
-
-        results.push({
-          file_name: file.fileName,
-          page_count: pageCount,
-          total_word_count: totalWordCount,
-          words_per_page: wordsPerPage,
-        })
-
-        console.log(`[v0] Successfully processed ${file.fileName}: ${totalWordCount} words across ${pageCount} pages`)
-      } catch (fileError) {
-        console.error(`[v0] Error processing file ${file.fileName}:`, fileError)
-
-        await supabase.from("quote_files").upsert(
-          {
-            quote_id,
-            file_name: file.fileName,
-            ocr_status: "failed",
-            ocr_message: fileError instanceof Error ? fileError.message : "Unknown error during processing",
-            words_per_page: [],
-            total_word_count: 0,
-            detected_language: "unknown",
-          },
-          {
-            onConflict: "quote_id,file_name",
-          },
-        )
-
-        results.push({
-          file_name: file.fileName,
-          page_count: 0,
-          total_word_count: 0,
-          words_per_page: [],
-        })
+        const resultRef = await extract.execute(ctx);
+        const zipBuffer = await resultRef.read(); // Buffer of zip
+        const stats = await analyzeExtractZip(zipBuffer);
+        page_count = stats.page_count;
+        total_word_count = stats.total_word_count;
+        words_per_page = stats.words_per_page;
+      } catch (e: any) {
+        console.error("[SERVER] [v0] Adobe PDF processing failed for", file_name, ":", e?.message || e);
+        // Leave counts at 0 to match your current shape; still push a result so UI stays consistent
       }
+
+      results.push({
+        file_name,
+        page_count,
+        total_word_count,
+        words_per_page,
+      });
     }
 
-    console.log("[v0] Document processing complete. Results:", results)
-
-    return NextResponse.json({
-      status: "success",
-      results,
-      message: `Successfully processed ${results.length} files`,
-    })
-  } catch (error) {
-    console.error("[v0] Document processing API Error:", error)
-    return NextResponse.json({
-      status: "error",
-      message: error instanceof Error ? error.message : "Unknown error occurred during document processing",
-    })
+    console.log("[SERVER] [v0] Document processing complete. Results:", JSON.stringify(results));
+    return NextResponse.json(results);
+  } catch (e: any) {
+    console.error("[SERVER] [v0] Process-document error", {
+      message: e?.message,
+      code: e?.code,
+      details: e?.details,
+      stack: e?.stack,
+    });
+    return NextResponse.json({ error: e?.message || "Internal server error" }, { status: 500 });
   }
 }
