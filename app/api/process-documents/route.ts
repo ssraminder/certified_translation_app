@@ -1,5 +1,14 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import {
+  ServicePrincipalCredentials,
+  PDFServices,
+  MimeType,
+  ExtractPDFJob,
+  ExtractPDFParams,
+  ExtractElementType,
+} from "@adobe/pdfservices-node-sdk"
+const PDFServicesSdk = require("@adobe/pdfservices-node-sdk")
 
 interface ProcessDocumentsRequest {
   quote_id: string
@@ -24,7 +33,6 @@ async function processWithAdobePDF(
 }> {
   console.log(`[v0] Processing PDF ${fileName} with Adobe PDF Services`)
 
-  // Adobe PDF Services API implementation
   const clientId = process.env.ADOBE_CLIENT_ID
   const clientSecret = process.env.ADOBE_CLIENT_SECRET
 
@@ -33,79 +41,69 @@ async function processWithAdobePDF(
   }
 
   try {
-    // Get access token
-    const tokenResponse = await fetch("https://ims-na1.adobelogin.com/ims/token/v1", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        grant_type: "client_credentials",
-        scope: "openid,AdobeID,read_organizations,additional_info.projectedProductContext,additional_info.job_function",
-      }),
+    // Create credentials using new API
+    const credentials = new ServicePrincipalCredentials({
+      clientId: clientId,
+      clientSecret: clientSecret,
     })
 
-    if (!tokenResponse.ok) {
-      throw new Error(`Adobe token request failed: ${tokenResponse.statusText}`)
-    }
+    // Create PDF Services instance
+    const pdfServices = new PDFServices({ credentials })
 
-    const tokenData = await tokenResponse.json()
-    const accessToken = tokenData.access_token
-
-    // Upload document
-    const uploadResponse = await fetch(
-      "https://cpf-ue1.adobe.io/ops/:create?respondWith=%7B%22reltype%22%3A%22http%3A//ns.adobe.com/rel/primary%22%7D",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "x-api-key": clientId,
-          "Content-Type": "application/pdf",
-        },
-        body: fileBuffer,
-      },
-    )
-
-    if (!uploadResponse.ok) {
-      throw new Error(`Adobe upload failed: ${uploadResponse.statusText}`)
-    }
-
-    const uploadData = await uploadResponse.json()
-    const assetId = uploadData.assetID
-
-    // Extract text
-    const extractResponse = await fetch("https://cpf-ue1.adobe.io/ops/:create", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "x-api-key": clientId,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        assetID: assetId,
-        renditions: [
-          {
-            type: "application/vnd.adobe.extractapi+json",
-          },
-        ],
-      }),
+    const buffer = Buffer.from(fileBuffer)
+    const inputAsset = await pdfServices.upload({
+      readStream: buffer,
+      mimeType: MimeType.PDF,
     })
 
-    if (!extractResponse.ok) {
-      throw new Error(`Adobe extraction failed: ${extractResponse.statusText}`)
+    // Create parameters for extraction
+    const params = new ExtractPDFParams({
+      elementsToExtract: [ExtractElementType.TEXT],
+    })
+
+    // Create the job
+    const job = new ExtractPDFJob({ inputAsset, params })
+
+    // Submit the job and get the result
+    const pollingURL = await pdfServices.submit({ job })
+    const pdfServicesResponse = await pdfServices.getJobResult({
+      pollingURL,
+      resultType: ExtractPDFJob.ResultType,
+    })
+
+    // Get the result asset
+    const resultAsset = pdfServicesResponse.result.resource
+    const streamAsset = await pdfServices.getContent({ asset: resultAsset })
+
+    let resultBuffer: Buffer
+
+    if (streamAsset.readStream && typeof streamAsset.readStream.on === "function") {
+      // It's a Node.js stream
+      const chunks: Buffer[] = []
+      for await (const chunk of streamAsset.readStream) {
+        chunks.push(chunk)
+      }
+      resultBuffer = Buffer.concat(chunks)
+    } else if (streamAsset.readStream instanceof Buffer) {
+      // It's already a Buffer
+      resultBuffer = streamAsset.readStream
+    } else if (streamAsset.readStream && typeof streamAsset.readStream.arrayBuffer === "function") {
+      // It's a Blob or similar
+      const arrayBuffer = await streamAsset.readStream.arrayBuffer()
+      resultBuffer = Buffer.from(arrayBuffer)
+    } else {
+      // Fallback: try to convert directly
+      resultBuffer = Buffer.from(streamAsset.readStream)
     }
 
-    const extractData = await extractResponse.json()
+    const extractedData = JSON.parse(resultBuffer.toString())
 
     // Parse results
-    const elements = extractData.elements || []
+    const elements = extractedData.elements || []
     let fullText = ""
     let totalWordCount = 0
     const wordsPerPage: number[] = []
-    let currentPage = 1
-    let currentPageWords = 0
+    const pageWordCounts: { [key: number]: number } = {}
 
     elements.forEach((element: any) => {
       if (element.Text) {
@@ -114,19 +112,19 @@ async function processWithAdobePDF(
           .split(/\s+/)
           .filter((w: string) => w.length > 0)
 
-        if (element.Page && element.Page !== currentPage) {
-          wordsPerPage.push(currentPageWords)
-          currentPage = element.Page
-          currentPageWords = 0
+        const pageNum = element.Page || 1
+        if (!pageWordCounts[pageNum]) {
+          pageWordCounts[pageNum] = 0
         }
-
-        currentPageWords += words.length
+        pageWordCounts[pageNum] += words.length
         totalWordCount += words.length
       }
     })
 
-    if (currentPageWords > 0) {
-      wordsPerPage.push(currentPageWords)
+    // Convert page word counts to array
+    const maxPage = Math.max(...Object.keys(pageWordCounts).map(Number), 1)
+    for (let i = 1; i <= maxPage; i++) {
+      wordsPerPage.push(pageWordCounts[i] || 0)
     }
 
     const pageCount = wordsPerPage.length || 1

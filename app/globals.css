@@ -39,6 +39,8 @@
   --sidebar-accent-foreground: #1f2937;
   --sidebar-border: #d1d5db;
   --sidebar-ring: rgba(139, 92, 246, 0.5);
+  --font-inter: "Inter", sans-serif;
+  --font-jetbrains-mono: "JetBrains Mono", monospace;
 }
 
 .dark {
@@ -77,8 +79,9 @@
 }
 
 @theme inline {
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Update font variables to use new font names */
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
