@@ -1,5 +1,4 @@
-// app/api/process-document/route.ts
-// Runs on Node (not Edge) so Adobe PDF Services SDK works.
+// app/api/process-documents/route.ts
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -16,9 +15,9 @@ const BUCKET = process.env.ORDERS_BUCKET || "orders";
 const ADOBE_ID = process.env.ADOBE_PDF_CLIENT_ID!;
 const ADOBE_SECRET = process.env.ADOBE_PDF_CLIENT_SECRET!;
 
-/**
- * Infer a basic mime type from file name.
- */
+type IncomingFileA = { fileName: string; signedUrl: string };            // what your UI sends
+type IncomingFileB = { objectPath: string; file_name: string };          // server-side path form
+
 function guessMime(name: string) {
   const n = name.toLowerCase();
   if (n.endsWith(".pdf")) return "application/pdf";
@@ -28,32 +27,19 @@ function guessMime(name: string) {
   return "application/octet-stream";
 }
 
-/**
- * Parse Adobe Extract ZIP buffer to compute page & word counts.
- * It reads structuredData.json and traverses for text content.
- */
 async function analyzeExtractZip(zipBuffer: Buffer) {
   const zip = await JSZip.loadAsync(zipBuffer);
   const sd = zip.file("structuredData.json");
-  if (!sd) {
-    return { page_count: 0, total_word_count: 0, words_per_page: [] as number[] };
-  }
-  const json = JSON.parse(await sd.async("string"));
+  if (!sd) return { page_count: 0, total_word_count: 0, words_per_page: [] as number[] };
 
-  // Collect words per page (fallback to page 1 if not present)
+  const json = JSON.parse(await sd.async("string"));
   const perPage: Record<number, number> = {};
-  const addWord = (page: number) => {
-    perPage[page] = (perPage[page] || 0) + 1;
-  };
+  const addWord = (page: number) => (perPage[page] = (perPage[page] || 0) + 1);
 
   const traverse = (node: any) => {
     if (!node || typeof node !== "object") return;
-    if (Array.isArray(node)) {
-      node.forEach(traverse);
-      return;
-    }
+    if (Array.isArray(node)) return node.forEach(traverse);
 
-    // Try several keys Adobe may use
     const pageNum =
       node.pageNumber ??
       node.PageNumber ??
@@ -81,12 +67,9 @@ async function analyzeExtractZip(zipBuffer: Buffer) {
   return { page_count, total_word_count, words_per_page };
 }
 
-/**
- * If the client doesn’t pass explicit files, list everything under <quote_id>/ in the bucket.
- * NOTE: Your logs show you’re storing objects at: "<quote_id>/<filename>" (no "orders/" prefix).
- */
 async function listObjectsForQuote(sb: ReturnType<typeof createClient>, quoteId: string) {
-  const prefix = `${quoteId}/`; // <- IMPORTANT: matches your current upload path
+  // Your upload path convention is "<quote_id>/<file>", not "orders/<quote_id>/..."
+  const prefix = `${quoteId}/`;
   const { data, error } = await sb.storage.from(BUCKET).list(prefix, { limit: 1000 });
   if (error) throw new Error(`List failed: ${error.message}`);
   return (data || [])
@@ -94,13 +77,12 @@ async function listObjectsForQuote(sb: ReturnType<typeof createClient>, quoteId:
     .map((f) => ({
       objectPath: `${prefix}${f.name}`, // "<quote_id>/<file>"
       file_name: f.name,
-      mimeType: guessMime(f.name),
-    }));
+    })) as IncomingFileB[];
 }
 
 export async function POST(req: NextRequest) {
   try {
-    // ---- DIAGNOSTIC: env checks up front ----
+    // Environment sanity checks
     if (!SUPABASE_URL || !SERVICE_ROLE) {
       console.error("[DIAG] Supabase env missing", {
         hasUrl: !!SUPABASE_URL,
@@ -116,7 +98,7 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
     const quote_id: string = body?.quote_id;
-    let files: Array<{ objectPath: string; file_name: string; mimeType?: string }> = body?.files;
+    let files: Array<IncomingFileA | IncomingFileB> = body?.files;
 
     if (!quote_id) {
       return NextResponse.json({ error: "quote_id is required" }, { status: 400 });
@@ -132,7 +114,7 @@ export async function POST(req: NextRequest) {
     console.log("[SERVER] [v0] Document processing API called with quote_id:", quote_id);
     console.log("[SERVER] [v0] Number of files to process:", files.length);
 
-    // ---- Adobe client ----
+    // Adobe client
     const creds = PDFServicesSdk.Credentials
       .servicePrincipalCredentialsBuilder()
       .withClientId(ADOBE_ID)
@@ -148,71 +130,77 @@ export async function POST(req: NextRequest) {
     }> = [];
 
     for (const f of files) {
-      const { objectPath, file_name } = f;
-      console.log("[SERVER] [v0] Processing file:", file_name);
+      // Normalize inputs: prefer 'signedUrl' from client; otherwise create a read URL from objectPath
+      let fileName: string | undefined;
+      let readUrl: string | undefined;
 
-      // Short-lived signed read URL for Supabase object
-      const { data: signed, error: signErr } = await sb.storage
-        .from(BUCKET)
-        .createSignedUrl(objectPath, 60);
-      if (signErr || !signed?.signedUrl) {
-        console.error("[SERVER] [v0] Signed URL error", { objectPath, signErr });
-        results.push({ file_name, page_count: 0, total_word_count: 0, words_per_page: [] });
+      if ("signedUrl" in f && f.signedUrl) {
+        fileName = ("fileName" in f && f.fileName) ? f.fileName : "document.pdf";
+        readUrl = f.signedUrl;
+      } else if ("objectPath" in f && f.objectPath) {
+        fileName = ("file_name" in f && f.file_name) ? f.file_name : f.objectPath.split("/").pop() || "document.pdf";
+        const { data: signed, error: signErr } = await sb.storage
+          .from(BUCKET)
+          .createSignedUrl(f.objectPath, 60);
+        if (signErr || !signed?.signedUrl) {
+          console.error("[SERVER] [v0] Signed URL error", { objectPath: f.objectPath, signErr });
+          results.push({ file_name: fileName, page_count: 0, total_word_count: 0, words_per_page: [] });
+          continue;
+        }
+        readUrl = signed.signedUrl;
+      } else {
+        console.error("[SERVER] [v0] Skipping file with unsupported shape:", f);
+        results.push({ file_name: "unknown", page_count: 0, total_word_count: 0, words_per_page: [] });
         continue;
       }
 
-      // Download -> Buffer -> Node Readable stream
-      const r = await fetch(signed.signedUrl);
+      console.log("[SERVER] [v0] Processing file:", fileName);
+
+      // Download file bytes
+      const r = await fetch(readUrl);
       if (!r.ok) {
-        console.error("[SERVER] [v0] Download failed", { objectPath, status: r.status, text: await r.text().catch(() => "") });
-        results.push({ file_name, page_count: 0, total_word_count: 0, words_per_page: [] });
+        console.error("[SERVER] [v0] Download failed", { fileName, status: r.status, text: await r.text().catch(() => "") });
+        results.push({ file_name: fileName, page_count: 0, total_word_count: 0, words_per_page: [] });
         continue;
       }
-      const ab = await r.arrayBuffer();
-      const buf = Buffer.from(ab);
+      const buf = Buffer.from(await r.arrayBuffer());
       const nodeStream = Readable.from(buf);
 
-      console.log("[SERVER] Processing PDF", file_name, "with Adobe PDF Services");
+      console.log("[SERVER] Processing PDF", fileName, "with Adobe PDF Services");
 
-      // Adobe: build FileRef from Node stream and run Extract
+      // Adobe: Extract
       const fileRef = PDFServicesSdk.FileRef.createFromStream(nodeStream, "application/pdf");
       const extract = PDFServicesSdk.ExtractPDF.Operation.createNew();
       extract.setInput(fileRef);
 
       try {
         const resultRef = await extract.execute(ctx);
-        const zipBuffer = await resultRef.read(); // Buffer (ZIP)
+        const zipBuffer = await resultRef.read();
         const stats = await analyzeExtractZip(zipBuffer);
-
         results.push({
-          file_name,
+          file_name: fileName,
           page_count: stats.page_count,
           total_word_count: stats.total_word_count,
           words_per_page: stats.words_per_page,
         });
       } catch (e: any) {
         console.error("[Adobe] execute() failed", {
-          file: file_name,
+          file: fileName,
           message: e?.message,
           code: e?.code,
           details: e?.details,
           errors: e?.errors,
           stack: e?.stack,
         });
-        // Keep shape consistent; counts 0 on failure
-        results.push({
-          file_name,
-          page_count: 0,
-          total_word_count: 0,
-          words_per_page: [],
-        });
+        results.push({ file_name: fileName, page_count: 0, total_word_count: 0, words_per_page: [] });
       }
     }
 
     console.log("[SERVER] [v0] Document processing complete. Results:", JSON.stringify(results));
-    return NextResponse.json(results);
+    // IMPORTANT: your UI expects an object with 'results'
+    return NextResponse.json({ results });
   } catch (e: any) {
-    console.error("[SERVER] [v0] Process-document error", {
+    console.error("[SERVER] [v0] Process-documents error", {
       message: e?.message,
       code: e?.code,
       details: e?.details,
