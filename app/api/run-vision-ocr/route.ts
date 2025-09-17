@@ -10,6 +10,189 @@ interface OCRResult {
   file_name: string
   page_count: number
   total_word_count: number
+  words_per_page: number[]
+}
+
+async function importPKCS8(pem: string, alg: string) {
+  const { importPKCS8 } = await import("jose")
+  return importPKCS8(pem, alg)
+}
+
+async function processWithDocumentAI(fileBuffer: ArrayBuffer, fileName: string, mimeType: string) {
+  console.log(`[v0] Processing ${fileName} with Document AI`)
+
+  const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID
+  const processorId = process.env.GOOGLE_DOCUMENT_AI_PROCESSOR_ID
+  const credentialsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
+
+  if (!projectId || !processorId || !credentialsJson) {
+    throw new Error("Missing Document AI configuration: PROJECT_ID, PROCESSOR_ID, or CREDENTIALS_JSON")
+  }
+
+  const fileSizeInMB = fileBuffer.byteLength / (1024 * 1024)
+  if (fileSizeInMB > 4) {
+    throw new Error(
+      `File too large for processing: ${fileSizeInMB.toFixed(1)}MB exceeds 4MB limit (Vercel function constraint)`,
+    )
+  }
+
+  // Parse service account credentials
+  const credentials = JSON.parse(credentialsJson)
+
+  // Create JWT token for authentication
+  const { SignJWT } = await import("jose")
+  const privateKey = await importPKCS8(credentials.private_key, "RS256")
+
+  const now = Math.floor(Date.now() / 1000)
+  const token = await new SignJWT({
+    iss: credentials.client_email,
+    sub: credentials.client_email,
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600,
+    scope: "https://www.googleapis.com/auth/cloud-platform",
+  })
+    .setProtectedHeader({ alg: "RS256" })
+    .sign(privateKey)
+
+  // Get access token
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: token,
+    }),
+  })
+
+  if (!tokenResponse.ok) {
+    const errorText = await tokenResponse.text()
+    console.error(`[v0] Token request failed:`, tokenResponse.status, errorText)
+    throw new Error(`Token request failed: ${errorText}`)
+  }
+
+  const tokenData = await tokenResponse.json()
+  const accessToken = tokenData.access_token
+
+  // Process document with Document AI
+  const documentAIUrl = `https://documentai.googleapis.com/v1/projects/${projectId}/locations/us/processors/${processorId}:process`
+
+  const base64Content = Buffer.from(fileBuffer).toString("base64")
+
+  const documentResponse = await fetch(documentAIUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      rawDocument: {
+        content: base64Content,
+        mimeType: mimeType,
+      },
+    }),
+  })
+
+  if (!documentResponse.ok) {
+    const errorText = await documentResponse.text()
+    console.error(`[v0] Document AI error for ${fileName}:`, documentResponse.status, errorText)
+    throw new Error(`Document AI error: ${documentResponse.status} ${errorText}`)
+  }
+
+  const responseText = await documentResponse.text()
+  let documentResult
+  try {
+    if (
+      responseText.startsWith("Request Entity Too Large") ||
+      responseText.includes("FUNCTION_PAYLOAD_TOO_LARGE") ||
+      responseText.includes("Request En")
+    ) {
+      throw new Error(`Document AI payload error: File too large for processing (${fileSizeInMB.toFixed(1)}MB)`)
+    }
+
+    documentResult = JSON.parse(responseText)
+  } catch (parseError) {
+    console.error(`[v0] Failed to parse Document AI response for ${fileName}:`, responseText.substring(0, 200))
+    if (responseText.includes("FUNCTION_PAYLOAD_TOO_LARGE")) {
+      throw new Error(`File too large for processing: ${fileSizeInMB.toFixed(1)}MB exceeds function limits`)
+    }
+    throw new Error(`Document AI returned invalid JSON response: ${responseText.substring(0, 100)}...`)
+  }
+
+  const document = documentResult.document
+
+  if (!document) {
+    throw new Error("No document returned from Document AI")
+  }
+
+  const pages = document.pages || []
+  const pageCount = pages.length
+  const wordsPerPage: number[] = []
+  let totalWordCount = 0
+
+  // Process each page to count words
+  pages.forEach((page: any, pageIndex: number) => {
+    let pageWordCount = 0
+
+    // Count words from tokens (most accurate method)
+    if (page.tokens) {
+      page.tokens.forEach((token: any) => {
+        // Only count tokens that contain actual text (not just spaces/punctuation)
+        if (token.layout?.textAnchor?.textSegments) {
+          const segments = token.layout.textAnchor.textSegments
+          segments.forEach((segment: any) => {
+            if (segment.startIndex !== undefined && segment.endIndex !== undefined) {
+              const tokenText = document.text.substring(segment.startIndex, segment.endIndex).trim()
+              if (tokenText && /\w/.test(tokenText)) {
+                // Contains word characters
+                pageWordCount++
+              }
+            }
+          })
+        }
+      })
+    } else if (page.paragraphs) {
+      // Fallback: count from paragraphs if tokens not available
+      page.paragraphs.forEach((paragraph: any) => {
+        if (paragraph.layout?.textAnchor?.textSegments) {
+          const segments = paragraph.layout.textAnchor.textSegments
+          segments.forEach((segment: any) => {
+            if (segment.startIndex !== undefined && segment.endIndex !== undefined) {
+              const paragraphText = document.text.substring(segment.startIndex, segment.endIndex)
+              const words = paragraphText
+                .trim()
+                .split(/\s+/)
+                .filter((word) => word.length > 0 && /\w/.test(word))
+              pageWordCount += words.length
+            }
+          })
+        }
+      })
+    }
+
+    wordsPerPage.push(pageWordCount)
+    totalWordCount += pageWordCount
+    console.log(`[v0] Page ${pageIndex + 1}: ${pageWordCount} words`)
+  })
+
+  // Get detected language
+  let detectedLanguage = "unknown"
+  if (pages.length > 0 && pages[0].detectedLanguages) {
+    detectedLanguage = pages[0].detectedLanguages[0]?.languageCode || "unknown"
+  }
+
+  console.log(`[v0] Document AI processed ${fileName}: ${totalWordCount} words across ${pageCount} pages`)
+  console.log(`[v0] Per-page word counts: ${wordsPerPage.join(", ")}`)
+
+  return {
+    totalWordCount,
+    pageCount,
+    detectedLanguage,
+    wordsPerPage,
+    fullText: document.text || "",
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -27,16 +210,6 @@ export async function POST(request: NextRequest) {
     console.log("[v0] OCR API called with quote_id:", quote_id)
     console.log("[v0] Number of files to process:", files.length)
 
-    const apiKey = process.env.GOOGLE_API_KEY
-    console.log("[v0] GOOGLE_API_KEY exists:", !!apiKey)
-
-    if (!apiKey) {
-      return NextResponse.json({
-        status: "error",
-        message: "Google API key not configured",
-      })
-    }
-
     const supabase = await createClient()
     const results: OCRResult[] = []
 
@@ -44,59 +217,20 @@ export async function POST(request: NextRequest) {
     for (const file of files) {
       try {
         console.log(`[v0] Processing file: ${file.fileName}`)
-        console.log(`[v0] File signed URL: ${file.signedUrl}`)
 
-        // Fetch file from signed URL
-        const response = await fetch(file.signedUrl)
-        if (!response.ok) {
-          console.error(`[v0] Failed to fetch file ${file.fileName}:`, response.status, response.statusText)
-          throw new Error(`Failed to fetch file: ${response.statusText}`)
-        }
+        const fileExtension = file.fileName.toLowerCase().split(".").pop()
+        const isImageFile = ["jpg", "jpeg", "png", "gif", "bmp", "webp"].includes(fileExtension || "")
+        const isPdfFile = fileExtension === "pdf"
 
-        const buffer = await response.arrayBuffer()
-        const base64Content = Buffer.from(buffer).toString("base64")
-        console.log(`[v0] File ${file.fileName} converted to base64, size:`, base64Content.length)
+        if (!isImageFile && !isPdfFile) {
+          console.log(`[v0] Skipping OCR for ${file.fileName} - unsupported file type (${fileExtension})`)
 
-        console.log(`[v0] Calling Google Vision REST API for ${file.fileName}`)
-        const visionResponse = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            requests: [
-              {
-                image: {
-                  content: base64Content,
-                },
-                features: [
-                  {
-                    type: "DOCUMENT_TEXT_DETECTION",
-                  },
-                ],
-              },
-            ],
-          }),
-        })
-
-        if (!visionResponse.ok) {
-          const errorText = await visionResponse.text()
-          console.error(`[v0] Vision API error for ${file.fileName}:`, visionResponse.status, errorText)
-          throw new Error(`Vision API error: ${visionResponse.status} ${errorText}`)
-        }
-
-        const visionResult = await visionResponse.json()
-        console.log(`[v0] Vision API response received for ${file.fileName}`)
-
-        const annotation = visionResult.responses?.[0]?.fullTextAnnotation
-        if (!annotation) {
-          // Update DB with no text found
           await supabase.from("quote_files").upsert(
             {
               quote_id,
               file_name: file.fileName,
-              ocr_status: "success",
-              ocr_message: "No text detected in document",
+              ocr_status: "skipped",
+              ocr_message: "OCR skipped - file type not supported",
               words_per_page: [],
               total_word_count: 0,
               detected_language: "unknown",
@@ -110,70 +244,64 @@ export async function POST(request: NextRequest) {
             file_name: file.fileName,
             page_count: 0,
             total_word_count: 0,
+            words_per_page: [],
           })
           continue
         }
 
-        // Extract words per page
-        const pages = annotation.pages || []
-        const words_per_page: number[] = []
-        let total_word_count = 0
+        // Fetch file from signed URL
+        const response = await fetch(file.signedUrl)
+        if (!response.ok) {
+          console.error(`[v0] Failed to fetch file ${file.fileName}:`, response.status, response.statusText)
+          throw new Error(`Failed to fetch file: ${response.statusText}`)
+        }
 
-        pages.forEach((page: any, pageIndex: number) => {
-          const blocks = page.blocks || []
-          let pageWordCount = 0
+        const buffer = await response.arrayBuffer()
 
-          blocks.forEach((block: any) => {
-            const paragraphs = block.paragraphs || []
-            paragraphs.forEach((paragraph: any) => {
-              const words = paragraph.words || []
-              pageWordCount += words.length
-            })
-          })
+        const mimeType = isPdfFile ? "application/pdf" : `image/${fileExtension === "jpg" ? "jpeg" : fileExtension}`
+        const documentResult = await processWithDocumentAI(buffer, file.fileName, mimeType)
 
-          words_per_page.push(pageWordCount)
-          total_word_count += pageWordCount
-        })
+        const totalWordCount = documentResult.totalWordCount
+        const pageCount = documentResult.pageCount
+        const detectedLanguage = documentResult.detectedLanguage
+        const wordsPerPage = documentResult.wordsPerPage
 
-        // Detect language (use the first detected language or fallback)
-        const detectedLanguages = annotation.pages?.[0]?.property?.detectedLanguages || []
-        const detected_language =
-          detectedLanguages.length > 0 ? detectedLanguages[0].languageCode || "unknown" : "unknown"
-
-        // Update database
-        await supabase.from("quote_files").upsert(
+        const { error: dbError } = await supabase.from("quote_files").upsert(
           {
             quote_id,
             file_name: file.fileName,
-            ocr_status: "success",
+            ocr_status: "completed",
             ocr_message: null,
-            words_per_page,
-            total_word_count,
-            detected_language,
+            words_per_page: wordsPerPage,
+            total_word_count: totalWordCount,
+            detected_language: detectedLanguage,
           },
           {
             onConflict: "quote_id,file_name",
           },
         )
 
+        if (dbError) {
+          console.error(`[v0] Database error for ${file.fileName}:`, dbError)
+          throw new Error(`Database error: ${dbError.message}`)
+        }
+
         results.push({
           file_name: file.fileName,
-          page_count: pages.length,
-          total_word_count,
+          page_count: pageCount,
+          total_word_count: totalWordCount,
+          words_per_page: wordsPerPage,
         })
 
-        console.log(
-          `[v0] Successfully processed ${file.fileName}: ${total_word_count} words across ${pages.length} pages`,
-        )
+        console.log(`[v0] Successfully processed ${file.fileName}: ${totalWordCount} words across ${pageCount} pages`)
       } catch (fileError) {
         console.error(`[v0] Error processing file ${file.fileName}:`, fileError)
 
-        // Update DB with error status
         await supabase.from("quote_files").upsert(
           {
             quote_id,
             file_name: file.fileName,
-            ocr_status: "error",
+            ocr_status: "failed",
             ocr_message: fileError instanceof Error ? fileError.message : "Unknown error during OCR processing",
             words_per_page: [],
             total_word_count: 0,
@@ -184,18 +312,21 @@ export async function POST(request: NextRequest) {
           },
         )
 
-        // Still add to results with zero counts
         results.push({
           file_name: file.fileName,
           page_count: 0,
           total_word_count: 0,
+          words_per_page: [],
         })
       }
     }
 
+    console.log("[v0] OCR processing complete. Results:", results)
+
     return NextResponse.json({
-      status: "ok",
+      status: "success",
       results,
+      message: `Successfully processed ${results.length} files`,
     })
   } catch (error) {
     console.error("[v0] OCR API Error:", error)

@@ -179,7 +179,7 @@ export function QuoteRequestForm() {
 
           return {
             fileName: uploadFile.file.name,
-            signedUrl: urlData.publicUrl,
+            publicUrl: urlData.publicUrl,
           }
         } catch (error) {
           console.error("[v0] File upload process error:", error)
@@ -190,84 +190,90 @@ export function QuoteRequestForm() {
       const uploadResults = await Promise.all(fileUploadPromises)
       setOverlayProgress(30)
 
-      // Step 2: Run OCR
-      setOverlayMessage("Running OCR...")
+      setOverlayMessage("Processing documents...")
       setOverlayProgress(40)
 
-      const ocrResponse = await fetch("/api/run-vision-ocr", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          quote_id: currentQuoteId,
-          files: uploadResults,
-        }),
-      })
+      const processingPromises = uploadResults.map(async (result, index) => {
+        const progressStep = 40 + (index / uploadResults.length) * 40 // Progress from 40% to 80%
 
-      const ocrResult = await ocrResponse.json()
-      if (ocrResult.status === "error") {
-        throw new Error(ocrResult.message)
-      }
+        try {
+          // Update progress for current file
+          setOverlayMessage(`Processing ${result.fileName}...`)
+          setOverlayProgress(progressStep)
 
-      setOverlayProgress(60)
+          console.log(`[v0] Starting server-side processing for ${result.fileName}`)
 
-      // Step 3: Run Gemini Analysis
-      setOverlayMessage("Analyzing with Gemini...")
-      setOverlayProgress(70)
+          // Call server-side processing API
+          const response = await fetch("/api/process-from-storage", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              quoteId: currentQuoteId,
+              fileName: result.fileName,
+              fileUrl: result.publicUrl,
+            }),
+          })
 
-      const geminiResponse = await fetch("/api/run-gemini-analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          quote_id: currentQuoteId,
-          fileNames: uploadedFiles.map((f) => f.file.name),
-        }),
-      })
+          if (!response.ok) {
+            const errorData = await response.json()
+            throw new Error(errorData.error || `Server processing failed: ${response.status}`)
+          }
 
-      const geminiResult = await geminiResponse.json()
-      if (geminiResult.status === "error") {
-        throw new Error(geminiResult.message)
-      }
+          const processingResult = await response.json()
+          console.log(`[v0] Server processing results for ${result.fileName}:`, processingResult)
 
-      setOverlayProgress(90)
+          console.log(`[v0] Successfully processed ${result.fileName}`)
 
-      // Step 4: Start polling for results
-      setOverlayMessage("Finalizing analysis...")
+          return {
+            fileName: result.fileName,
+            success: true,
+            results: processingResult.results,
+          }
+        } catch (error) {
+          console.error(`[v0] Error processing ${result.fileName}:`, error)
 
-      let pollCount = 0
-      const maxPolls = 20
-      const pollInterval = 1500
+          // Update database with error status
+          try {
+            await supabase
+              .from("quote_files")
+              .update({
+                ocr_status: "failed",
+                gem_status: "failed",
+              })
+              .eq("quote_id", currentQuoteId)
+              .eq("file_name", result.fileName)
+          } catch (dbError) {
+            console.error(`[v0] Failed to update error status for ${result.fileName}:`, dbError)
+          }
 
-      const pollResults = async (): Promise<void> => {
-        if (pollCount >= maxPolls) {
-          setOverlayMessage("Analysis complete")
-          setOverlayProgress(100)
-          setShowResults(true)
-          setTimeout(() => setIsProcessing(false), 1000)
-          return
-        }
-
-        const response = await fetch(`/api/fetch-quote-files?quote_id=${currentQuoteId}`)
-        const data = await response.json()
-
-        if (data.status === "ok" && data.rows) {
-          const allTerminal = data.rows.every((row: any) =>
-            ["success", "error", "done", "completed"].includes(row.gem_status?.toLowerCase()),
-          )
-
-          if (allTerminal) {
-            setOverlayMessage("Analysis complete")
-            setOverlayProgress(100)
-            setShowResults(true)
-            setTimeout(() => setIsProcessing(false), 1000)
-            return
+          return {
+            fileName: result.fileName,
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error",
           }
         }
+      })
 
-        pollCount++
-        setTimeout(pollResults, pollInterval)
+      const processingResults = await Promise.all(processingPromises)
+      setOverlayProgress(90)
+
+      // Check results
+      const successfulFiles = processingResults.filter((r) => r.success)
+      const failedFiles = processingResults.filter((r) => !r.success)
+
+      console.log(`[v0] Processing complete: ${successfulFiles.length} successful, ${failedFiles.length} failed`)
+
+      if (failedFiles.length > 0) {
+        console.warn("[v0] Some files failed to process:", failedFiles)
       }
 
-      await pollResults()
+      // Step 3: Finalize
+      setOverlayMessage("Analysis complete")
+      setOverlayProgress(100)
+      setShowResults(true)
+      setTimeout(() => setIsProcessing(false), 1000)
     } catch (error) {
       console.error("[v0] Quote submission error:", error)
       alert(`Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`)
@@ -285,7 +291,7 @@ export function QuoteRequestForm() {
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
       "image/*": [".png", ".jpg", ".jpeg"],
     },
-    maxSize: 10 * 1024 * 1024, // 10MB
+    maxSize: 50 * 1024 * 1024, // Increased to 50MB since server-side can handle larger files
     multiple: true,
   })
 
@@ -430,7 +436,7 @@ export function QuoteRequestForm() {
                   <Badge variant="secondary">XLSX</Badge>
                   <Badge variant="secondary">Images</Badge>
                 </div>
-                <p className="text-xs text-muted mt-2">Maximum file size: 10MB per file</p>
+                <p className="text-xs text-muted mt-2">Maximum file size: 50MB per file</p>
               </div>
 
               {uploadedFiles.length > 0 && (

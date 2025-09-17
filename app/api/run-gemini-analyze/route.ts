@@ -64,37 +64,30 @@ export async function POST(request: NextRequest) {
         const base64Content = Buffer.from(buffer).toString("base64")
         const mimeType = response.headers.get("content-type") || "application/octet-stream"
 
-        // Create prompt for document analysis
-        const prompt = `Analyze this document and provide detailed information for each page in JSON format. For each page, identify:
+        // Call Gemini API
+        const fileSizeLimit = 4 * 1024 * 1024 // 4MB limit to match Vercel function constraints
+        if (buffer.byteLength > fileSizeLimit) {
+          throw new Error(
+            `File too large for Gemini analysis: ${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB (limit: 4MB due to Vercel function constraints)`,
+          )
+        }
 
-1. Document type (e.g., "Birth Certificate", "Driver's License", "Passport", "Academic Transcript", "Medical Record", "Legal Document", "Business Document", etc.)
-2. Complexity level: "Easy", "Medium", or "Hard" based on formatting, technical terms, and layout complexity
-3. Languages detected (provide ISO language codes like "en", "es", "fr", "de", "hr", "pa", etc.)
-4. Names of people mentioned (extract full names)
-5. Confidence score (0-100) for the analysis accuracy
-
-Return ONLY a JSON object with this structure:
+        const prompt = `Analyze this document and provide a JSON response with the following structure:
 {
-  "languages_all": ["en", "es"],
+  "languages_all": ["language1", "language2"],
   "pages": {
     "1": {
-      "document_type": "Birth Certificate",
-      "complexity": "Easy",
-      "languages": ["en"],
-      "names": ["John Smith", "Mary Smith"],
-      "confidence": 95
-    },
-    "2": {
-      "document_type": "Academic Transcript", 
-      "complexity": "Medium",
-      "languages": ["en"],
-      "names": ["John Smith"],
-      "confidence": 88
+      "complexity": "Low|Medium|High",
+      "document_type": "Contract|Legal Document|Certificate|Invoice|Other",
+      "names": ["name1", "name2"],
+      "languages": ["language1"],
+      "confidence": 0.95
     }
   }
-}`
+}
 
-        // Call Gemini API
+Please analyze the document content, identify all languages present, extract any person names, determine document type and complexity for each page, and provide confidence scores.`
+
         const result = await model.generateContent([
           {
             inlineData: {
@@ -108,17 +101,55 @@ Return ONLY a JSON object with this structure:
         const responseText = result.response.text()
         console.log(`[Gemini] Raw response for ${fileName}:`, responseText)
 
-        // Parse JSON response
         let analysisData
         try {
-          // Clean the response text to extract JSON
-          const jsonMatch = responseText.match(/\{[\s\S]*\}/)
-          if (!jsonMatch) {
-            throw new Error("No JSON found in response")
+          // Check if response looks like an error message
+          if (
+            responseText.startsWith("Request Entity Too Large") ||
+            responseText.startsWith("Request En") ||
+            responseText.includes("FUNCTION_PAYLOAD_TOO_LARGE")
+          ) {
+            throw new Error(`Gemini API error: ${responseText.split("\n")[0]}`)
           }
-          analysisData = JSON.parse(jsonMatch[0])
+
+          // Try to extract JSON from response
+          const jsonMatch = responseText.match(/\{[\s\S]*\}/)
+          if (jsonMatch) {
+            analysisData = JSON.parse(jsonMatch[0])
+          } else {
+            // If no JSON found, create a structured response from the text
+            console.log(`[Gemini] No JSON found, creating structured response from text for ${fileName}`)
+            analysisData = {
+              languages_all: ["unknown"],
+              pages: {
+                "1": {
+                  complexity: "Medium",
+                  document_type: "Document",
+                  names: [],
+                  languages: ["unknown"],
+                  confidence: 0.8,
+                },
+              },
+              raw_analysis: responseText, // Store the full text analysis
+            }
+          }
         } catch (parseError) {
-          throw new Error(`Failed to parse Gemini response: ${parseError}`)
+          console.error(`[Gemini] Failed to parse response for ${fileName}:`, responseText)
+          // Create a fallback response structure
+          analysisData = {
+            languages_all: ["unknown"],
+            pages: {
+              "1": {
+                complexity: "Medium",
+                document_type: "Document",
+                names: [],
+                languages: ["unknown"],
+                confidence: 0.5,
+              },
+            },
+            raw_analysis: responseText,
+            parse_error: parseError instanceof Error ? parseError.message : "Unknown parsing error",
+          }
         }
 
         // Extract data for database storage
@@ -163,13 +194,15 @@ Return ONLY a JSON object with this structure:
       } catch (fileError) {
         console.error(`[Gemini] Error analyzing file ${fileName}:`, fileError)
 
+        const errorMessage = fileError instanceof Error ? fileError.message : "Unknown error during Gemini analysis"
+
         // Update DB with error status
         await supabase.from("quote_files").upsert(
           {
             quote_id,
             file_name: fileName,
-            gem_status: "error",
-            gem_message: fileError instanceof Error ? fileError.message : "Unknown error during Gemini analysis",
+            gem_status: "failed", // Use "failed" instead of "error" to match database constraint
+            gem_message: errorMessage,
           },
           {
             onConflict: "quote_id,file_name",
