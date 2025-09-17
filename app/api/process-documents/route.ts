@@ -24,25 +24,15 @@ type IncomingFileB = { objectPath: string; file_name: string }; // server-side s
 
 // ---- PDF text extraction via pdfjs-dist (no OCR) ----
 async function extractWordCountsFromPdf(buffer: Buffer) {
-  // In pdfjs-dist v5+, GlobalWorkerOptions is readonly. Do NOT reassign it.
-  // It's fine on Node to leave workerSrc unset, but setting it is harmless if present.
-  try {
-    // @ts-ignore - present in pdfjs-dist
-    if (pdfjsLib.GlobalWorkerOptions) {
-      // @ts-ignore
-      pdfjsLib.GlobalWorkerOptions.workerSrc = undefined;
-    }
-  } catch {
-    // ignore – not fatal
-  }
-
+  // IMPORTANT: On Node/serverless, disable the worker so we don't need workerSrc.
   const loadingTask = pdfjsLib.getDocument({
     data: buffer,
-    useSystemFonts: true,
+    disableWorker: true,       // <-- key fix
     isEvalSupported: false,
     disableFontFace: true,
-    // Avoid worker fetch paths in serverless
-    // @ts-ignore (option is accepted by getDocument)
+    useSystemFonts: true,
+    // Avoid worker fetch paths in some environments
+    // @ts-ignore (accepted by getDocument)
     useWorkerFetch: false,
   });
 
@@ -191,9 +181,10 @@ export async function POST(req: NextRequest) {
           try {
             const loading = pdfjsLib.getDocument({
               data: buf,
-              useSystemFonts: true,
+              disableWorker: true,   // <-- also add here
               isEvalSupported: false,
               disableFontFace: true,
+              useSystemFonts: true,
               // @ts-ignore
               useWorkerFetch: false,
             });
