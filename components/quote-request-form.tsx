@@ -101,6 +101,25 @@ export function QuoteRequestForm() {
 
       const supabase = createClient()
 
+      console.log("[v0] Checking Supabase storage connection...")
+
+      try {
+        // Test storage connection by trying to list files in the bucket
+        const { data: testData, error: testError } = await supabase.storage.from("orders").list("", { limit: 1 })
+
+        if (testError) {
+          console.error("[v0] Storage bucket test failed:", testError)
+          throw new Error(`Storage bucket 'orders' is not accessible: ${testError.message}`)
+        }
+
+        console.log("[v0] Storage bucket 'orders' is accessible")
+      } catch (bucketError) {
+        console.error("[v0] Bucket access error:", bucketError)
+        throw new Error(
+          `Cannot access storage bucket: ${bucketError instanceof Error ? bucketError.message : "Unknown error"}`,
+        )
+      }
+
       // Step 1: Upload files to Supabase Storage
       setOverlayMessage("Uploading files...")
       setOverlayProgress(20)
@@ -110,6 +129,8 @@ export function QuoteRequestForm() {
 
         try {
           console.log("[v0] Uploading file:", uploadFile.file.name, "to path:", filePath)
+          console.log("[v0] File size:", uploadFile.file.size, "bytes")
+          console.log("[v0] File type:", uploadFile.file.type)
 
           // Upload to storage
           const { data: uploadData, error: uploadError } = await supabase.storage
@@ -120,6 +141,11 @@ export function QuoteRequestForm() {
 
           if (uploadError) {
             console.error("[v0] Storage upload error:", uploadError)
+            console.error("[v0] Upload error details:", {
+              message: uploadError.message,
+              statusCode: uploadError.statusCode,
+              error: uploadError.error,
+            })
             throw new Error(`Failed to upload ${uploadFile.file.name}: ${uploadError.message}`)
           }
 
@@ -128,6 +154,13 @@ export function QuoteRequestForm() {
           // Get public URL
           const { data: urlData } = supabase.storage.from("orders").getPublicUrl(filePath)
           console.log("[v0] Public URL generated:", urlData.publicUrl)
+
+          try {
+            const testResponse = await fetch(urlData.publicUrl, { method: "HEAD" })
+            console.log("[v0] File accessibility test:", testResponse.status, testResponse.statusText)
+          } catch (accessError) {
+            console.warn("[v0] File accessibility test failed:", accessError)
+          }
 
           // Insert database record
           const { error: dbError } = await supabase.from("quote_files").insert({
