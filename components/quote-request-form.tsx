@@ -8,8 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { FileText, Upload, X } from "lucide-react"
-import { createClient } from "@/lib/supabase/client"
+import { FileText, Upload, X, CheckCircle, Clock, AlertCircle } from "lucide-react"
 import { ensureQuoteId } from "@/lib/utils"
 import { AnalysisOverlay } from "./analysis-overlay"
 import { QuoteResults } from "./quote-results"
@@ -26,6 +25,13 @@ interface FormData {
 interface UploadedFile {
   file: File
   id: string
+}
+
+interface WorkflowStep {
+  id: string
+  name: string
+  status: "pending" | "running" | "completed" | "error"
+  message?: string
 }
 
 export function QuoteRequestForm() {
@@ -45,6 +51,16 @@ export function QuoteRequestForm() {
   const [overlayProgress, setOverlayProgress] = useState(0)
   const [quoteId, setQuoteId] = useState<string | null>(null)
   const [showResults, setShowResults] = useState(false)
+
+  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([
+    { id: "upload", name: "Upload Files", status: "pending" },
+    { id: "docai", name: "Run Document Processing", status: "pending" },
+    { id: "gemini", name: "Analyze Documents", status: "pending" },
+  ])
+
+  const updateStepStatus = (stepId: string, status: WorkflowStep["status"], message?: string) => {
+    setWorkflowSteps((prev) => prev.map((step) => (step.id === stepId ? { ...step, status, message } : step)))
+  }
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
@@ -92,192 +108,168 @@ export function QuoteRequestForm() {
     }
 
     setIsProcessing(true)
-    setOverlayMessage("Submitting...")
-    setOverlayProgress(10)
+    setShowResults(false)
 
     try {
       const currentQuoteId = ensureQuoteId()
       setQuoteId(currentQuoteId)
 
-      const supabase = createClient()
+      updateStepStatus("upload", "running", "Creating signed upload URLs...")
+      setOverlayMessage("Step 1: Uploading files...")
+      setOverlayProgress(10)
 
-      console.log("[v0] Checking Supabase storage connection...")
-
-      try {
-        // Test storage connection by trying to list files in the bucket
-        const { data: testData, error: testError } = await supabase.storage.from("orders").list("", { limit: 1 })
-
-        if (testError) {
-          console.error("[v0] Storage bucket test failed:", testError)
-          throw new Error(`Storage bucket 'orders' is not accessible: ${testError.message}`)
-        }
-
-        console.log("[v0] Storage bucket 'orders' is accessible")
-      } catch (bucketError) {
-        console.error("[v0] Bucket access error:", bucketError)
-        throw new Error(
-          `Cannot access storage bucket: ${bucketError instanceof Error ? bucketError.message : "Unknown error"}`,
-        )
-      }
-
-      // Step 1: Upload files to Supabase Storage
-      setOverlayMessage("Uploading files...")
-      setOverlayProgress(20)
-
-      const fileUploadPromises = uploadedFiles.map(async (uploadFile) => {
-        const filePath = `${currentQuoteId}/${uploadFile.file.name}`
-
+      const uploadPromises = uploadedFiles.map(async (uploadFile) => {
         try {
-          console.log("[v0] Uploading file:", uploadFile.file.name, "to path:", filePath)
-          console.log("[v0] File size:", uploadFile.file.size, "bytes")
-          console.log("[v0] File type:", uploadFile.file.type)
+          console.log(`[v0] Requesting signed URL for: ${uploadFile.file.name}`)
 
-          // Upload to storage
-          const { data: uploadData, error: uploadError } = await supabase.storage
-            .from("orders")
-            .upload(filePath, uploadFile.file, {
-              upsert: true, // Allow overwriting if file exists
-            })
-
-          if (uploadError) {
-            console.error("[v0] Storage upload error:", uploadError)
-            console.error("[v0] Upload error details:", {
-              message: uploadError.message,
-              statusCode: uploadError.statusCode,
-              error: uploadError.error,
-            })
-            throw new Error(`Failed to upload ${uploadFile.file.name}: ${uploadError.message}`)
-          }
-
-          console.log("[v0] Upload successful:", uploadData)
-
-          // Get public URL
-          const { data: urlData } = supabase.storage.from("orders").getPublicUrl(filePath)
-          console.log("[v0] Public URL generated:", urlData.publicUrl)
-
-          try {
-            const testResponse = await fetch(urlData.publicUrl, { method: "HEAD" })
-            console.log("[v0] File accessibility test:", testResponse.status, testResponse.statusText)
-          } catch (accessError) {
-            console.warn("[v0] File accessibility test failed:", accessError)
-          }
-
-          // Insert database record
-          const { error: dbError } = await supabase.from("quote_files").insert({
-            quote_id: currentQuoteId,
-            file_name: uploadFile.file.name,
-            storage_path: filePath,
-            public_url: urlData.publicUrl,
-            ocr_status: "pending",
-            gem_status: "pending",
+          // Get signed upload URL
+          const signedUrlResponse = await fetch("/api/storage/signed-url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              quote_id: currentQuoteId,
+              filename: uploadFile.file.name,
+              contentType: uploadFile.file.type,
+            }),
           })
 
-          if (dbError) {
-            console.error("[v0] Database insert error:", dbError)
-            throw new Error(`Failed to save ${uploadFile.file.name} to database: ${dbError.message}`)
+          if (!signedUrlResponse.ok) {
+            const errorText = await signedUrlResponse.text()
+            console.error(`[v0] Signed URL request failed for ${uploadFile.file.name}:`, errorText)
+            throw new Error(`Failed to get signed URL for ${uploadFile.file.name}: ${errorText}`)
           }
 
-          return {
-            fileName: uploadFile.file.name,
-            publicUrl: urlData.publicUrl,
+          const { uploadUrl } = await signedUrlResponse.json()
+          console.log(`[v0] Got signed URL for: ${uploadFile.file.name}`)
+
+          // Upload file using signed URL
+          const uploadResponse = await fetch(uploadUrl, {
+            method: "PUT",
+            body: uploadFile.file,
+            headers: {
+              "Content-Type": uploadFile.file.type,
+            },
+          })
+
+          if (!uploadResponse.ok) {
+            console.error(
+              `[v0] File upload failed for ${uploadFile.file.name}:`,
+              uploadResponse.status,
+              uploadResponse.statusText,
+            )
+            throw new Error(
+              `Failed to upload ${uploadFile.file.name}: ${uploadResponse.status} ${uploadResponse.statusText}`,
+            )
           }
+
+          console.log(`[v0] Successfully uploaded: ${uploadFile.file.name}`)
+          return uploadFile.file.name
         } catch (error) {
-          console.error("[v0] File upload process error:", error)
+          console.error(`[v0] Upload error for ${uploadFile.file.name}:`, error)
           throw error
         }
       })
 
-      const uploadResults = await Promise.all(fileUploadPromises)
+      const uploadedFileNames = await Promise.all(uploadPromises)
+      updateStepStatus("upload", "completed", `Uploaded ${uploadedFileNames.length} files`)
       setOverlayProgress(30)
 
-      setOverlayMessage("Processing documents...")
+      updateStepStatus("docai", "running", "Starting document processing...")
+      setOverlayMessage("Step 2: Processing documents...")
       setOverlayProgress(40)
 
-      const processingPromises = uploadResults.map(async (result, index) => {
-        const progressStep = 40 + (index / uploadResults.length) * 40 // Progress from 40% to 80%
-
-        try {
-          // Update progress for current file
-          setOverlayMessage(`Processing ${result.fileName}...`)
-          setOverlayProgress(progressStep)
-
-          console.log(`[v0] Starting server-side processing for ${result.fileName}`)
-
-          // Call server-side processing API
-          const response = await fetch("/api/process-from-storage", {
+      // Create files array with signed URLs for processing
+      const filesForProcessing = await Promise.all(
+        uploadedFileNames.map(async (fileName) => {
+          // Get signed URL for reading the uploaded file
+          const signedUrlResponse = await fetch("/api/storage/signed-url", {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              quoteId: currentQuoteId,
-              fileName: result.fileName,
-              fileUrl: result.publicUrl,
+              quote_id: currentQuoteId,
+              filename: fileName,
+              operation: "read",
             }),
           })
 
-          if (!response.ok) {
-            const errorData = await response.json()
-            throw new Error(errorData.error || `Server processing failed: ${response.status}`)
+          if (!signedUrlResponse.ok) {
+            throw new Error(`Failed to get read URL for ${fileName}`)
           }
 
-          const processingResult = await response.json()
-          console.log(`[v0] Server processing results for ${result.fileName}:`, processingResult)
-
-          console.log(`[v0] Successfully processed ${result.fileName}`)
-
+          const { signedUrl } = await signedUrlResponse.json()
           return {
-            fileName: result.fileName,
-            success: true,
-            results: processingResult.results,
+            fileName,
+            signedUrl,
           }
-        } catch (error) {
-          console.error(`[v0] Error processing ${result.fileName}:`, error)
+        }),
+      )
 
-          // Update database with error status
-          try {
-            await supabase
-              .from("quote_files")
-              .update({
-                ocr_status: "failed",
-                gem_status: "failed",
-              })
-              .eq("quote_id", currentQuoteId)
-              .eq("file_name", result.fileName)
-          } catch (dbError) {
-            console.error(`[v0] Failed to update error status for ${result.fileName}:`, dbError)
-          }
-
-          return {
-            fileName: result.fileName,
-            success: false,
-            error: error instanceof Error ? error.message : "Unknown error",
-          }
-        }
+      const processingResponse = await fetch("/api/process-documents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          quote_id: currentQuoteId,
+          files: filesForProcessing,
+        }),
       })
 
-      const processingResults = await Promise.all(processingPromises)
-      setOverlayProgress(90)
-
-      // Check results
-      const successfulFiles = processingResults.filter((r) => r.success)
-      const failedFiles = processingResults.filter((r) => !r.success)
-
-      console.log(`[v0] Processing complete: ${successfulFiles.length} successful, ${failedFiles.length} failed`)
-
-      if (failedFiles.length > 0) {
-        console.warn("[v0] Some files failed to process:", failedFiles)
+      if (!processingResponse.ok) {
+        const errorText = await processingResponse.text()
+        console.error("[v0] Document processing failed:", errorText)
+        throw new Error("Failed to process documents")
       }
 
-      // Step 3: Finalize
-      setOverlayMessage("Analysis complete")
+      const processingResult = await processingResponse.json()
+      const totalPages = processingResult.results?.reduce((sum: number, result: any) => sum + result.page_count, 0) || 0
+      const totalWords =
+        processingResult.results?.reduce((sum: number, result: any) => sum + result.total_word_count, 0) || 0
+
+      updateStepStatus("docai", "completed", `Processed ${totalPages} pages, ${totalWords} words`)
+      setOverlayProgress(60)
+
+      updateStepStatus("gemini", "running", "Starting hybrid analysis...")
+      setOverlayMessage("Step 3: Analyzing documents...")
+      setOverlayProgress(70)
+
+      const analysisPromises = filesForProcessing.map(async (file) => {
+        const geminiResponse = await fetch("/api/gemini/analyze-hybrid", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            quote_id: currentQuoteId,
+            objectPath: file.fileName,
+            maxPages: 50,
+          }),
+        })
+
+        if (!geminiResponse.ok) {
+          throw new Error(`Failed to analyze ${file.fileName}`)
+        }
+
+        return await geminiResponse.json()
+      })
+
+      const analysisResults = await Promise.all(analysisPromises)
+      updateStepStatus("gemini", "completed", "Hybrid analysis completed")
+      setOverlayProgress(90)
+
+      // Finalize
+      setOverlayMessage("Analysis complete!")
       setOverlayProgress(100)
       setShowResults(true)
       setTimeout(() => setIsProcessing(false), 1000)
+
+      console.log("[v0] Actions Taken: Completed three-step hybrid pipeline workflow")
     } catch (error) {
-      console.error("[v0] Quote submission error:", error)
+      console.error("[v0] Workflow error:", error)
+
+      // Update failed step status
+      const currentStep = workflowSteps.find((step) => step.status === "running")
+      if (currentStep) {
+        updateStepStatus(currentStep.id, "error", error instanceof Error ? error.message : "Unknown error")
+      }
+
       alert(`Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`)
-      setOverlayMessage("Error occurred during processing")
       setTimeout(() => setIsProcessing(false), 2000)
     }
   }
@@ -306,6 +298,47 @@ export function QuoteRequestForm() {
             <span className="text-secondary-foreground font-bold text-xl">CT</span>
           </div>
         </div>
+
+        {(isProcessing || showResults) && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg font-medium">Processing Status</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {workflowSteps.map((step, index) => (
+                  <div key={step.id} className="flex items-center gap-3">
+                    <div className="flex-shrink-0">
+                      {step.status === "completed" && <CheckCircle className="h-5 w-5 text-green-500" />}
+                      {step.status === "running" && <Clock className="h-5 w-5 text-blue-500 animate-spin" />}
+                      {step.status === "error" && <AlertCircle className="h-5 w-5 text-red-500" />}
+                      {step.status === "pending" && <div className="h-5 w-5 rounded-full border-2 border-gray-300" />}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-foreground">{step.name}</span>
+                        <Badge
+                          variant={
+                            step.status === "completed"
+                              ? "default"
+                              : step.status === "running"
+                                ? "secondary"
+                                : step.status === "error"
+                                  ? "destructive"
+                                  : "outline"
+                          }
+                        >
+                          {step.status}
+                        </Badge>
+                      </div>
+                      {step.message && <p className="text-sm text-muted-foreground mt-1">{step.message}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Quote Form */}
         <Card>
@@ -467,7 +500,7 @@ export function QuoteRequestForm() {
 
             <div className="flex justify-center pt-4">
               <Button onClick={handleSubmit} disabled={isProcessing} size="lg" className="px-8">
-                Get Instant Quote
+                {isProcessing ? "Processing..." : "Get Instant Quote"}
               </Button>
             </div>
           </CardContent>
